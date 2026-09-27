@@ -13,7 +13,9 @@
   在同一台机器上同样拿到 406。
 
   因此这里的重点是**请求前就限速**（_MIN_INTERVAL_SECONDS），从源头不踩线；
-  下面的退避重试只是补救，救不了已经粘上的封禁。真要快速连查多轮，只能等。
+  退避重试只是补救，救不了已经粘上的封禁。真撞上了就**熔断**（_BAN_SECONDS）：
+  窗口内不再发请求、立刻失败。VLN 那次是反面教材——9 个请求全打在封禁窗口里，
+  白等 70 秒，而且每次尝试都在刷新封禁。
 """
 
 from __future__ import annotations
@@ -41,10 +43,19 @@ _ABSTRACT_LIMIT = 900
 _MIN_INTERVAL_SECONDS = 3.0
 
 # 撞上限流后的退避。粘性封禁能持续几分钟，所以这里救不了全部情况，
-# 只是给偶发的抖动一个机会；真被封死了只能等，错误信息里会说明。
+# 只是给偶发的抖动一个机会——实测同一个 URL 连打会得到 200/406/406/200，
+# 说明单次 406 确实有抖动成分，值得再试一下。
 _RETRY_WAITS = (5.0, 15.0)
 
+# 退避全败 = 撞上的是粘性封禁而不是抖动，接下来这个时长内不再发请求。
+#
+# 为什么是熔断而不是继续退避：封禁以**分钟**计，5/15 秒跨不过去；更要命的是
+# 每次尝试都在刷新封禁，越试封得越久。窗口内直接失败，模型换个路子（比如
+# 改用 web_search）比在这儿干等快得多。
+_BAN_SECONDS = 180.0
+
 _last_request_at: float = 0.0
+_banned_until: float = 0.0
 
 
 def _text(node: ET.Element, path: str) -> str:
@@ -52,8 +63,18 @@ def _text(node: ET.Element, path: str) -> str:
 
 
 def _fetch(params: dict, timeout: float = 30.0) -> ET.Element:
-    """发一次查询并解析 XML。请求前限速，撞上限流再退避重试。"""
-    global _last_request_at
+    """发一次查询并解析 XML。请求前限速；撞上限流先退避，退避全败就熔断。"""
+    global _last_request_at, _banned_until
+
+    # 熔断窗口内不发请求，直接失败。发了也是白挨——封禁期间正常请求一样被挡，
+    # 而且这次尝试本身又会刷新封禁的到期时间。
+    remaining = _banned_until - time.monotonic()
+    if remaining > 0:
+        raise RuntimeError(
+            f"arXiv 还在限流封禁中，约 {int(remaining) + 1} 秒后才值得再试。"
+            f"封禁期间正常请求同样会被挡，现在重试没有意义。"
+            f"可以改用 web_search 先拿到大致信息，或者等窗口过去。"
+        )
 
     url = f"{_API_URL}?{urllib.parse.urlencode(params)}"
     last_status: int | None = None
@@ -89,10 +110,14 @@ def _fetch(params: dict, timeout: float = 30.0) -> ET.Element:
         except urllib.error.URLError as exc:
             raise RuntimeError(f"连不上 arXiv：{exc.reason}") from exc
 
+    # 退避全败 → 判定为粘性封禁，记下到期时间，接下来几分钟不再发请求
+    _banned_until = time.monotonic() + _BAN_SECONDS
+    waits = "、".join(f"{wait:g}s" for wait in _RETRY_WAITS)
     raise RuntimeError(
-        f"arXiv 限流了（HTTP {last_status}，已按 3 秒间隔重试 {len(_RETRY_WAITS)} 次）。"
-        f"它的封禁会持续几分钟，且期间正常请求也会被挡。"
-        f"等几分钟再试，或者把查询词写具体一点、少查几次。"
+        f"arXiv 限流了（HTTP {last_status}，已分别等 {waits} 后重试，仍被挡）。"
+        f"这是粘性封禁，会持续几分钟，期间正常请求也会被挡，"
+        f"所以接下来 {int(_BAN_SECONDS)} 秒内不再尝试（重试只会刷新封禁）。"
+        f"可以改用 web_search，或者把查询词写具体一点、少查几次。"
     )
 
 

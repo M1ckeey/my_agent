@@ -16,11 +16,12 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import OpenAI, Timeout
 
 from tools import TOOLS, to_openai_tools
 
@@ -45,6 +46,55 @@ _SYSTEM_PROMPT = """你是一个通过调用工具来解决问题的智能体。
 """
 
 
+# ---------------------------------------------------------------- 流式拼装
+
+# 流式返回的是一堆增量分片，要自己拼回一条完整消息。下面三个类型就是拼装结果，
+# **字段名刻意和 SDK 的对象保持一致**（content / tool_calls / id / function.name /
+# function.arguments），这样 _run_tool 和 run_agent 一行都不用改。
+
+
+@dataclass
+class _Function:
+    name: str
+    arguments: str
+
+
+@dataclass
+class _ToolCall:
+    id: str
+    function: _Function
+
+
+@dataclass
+class _Message:
+    content: str | None
+    tool_calls: list[_ToolCall] | None
+    reasoning_content: str | None = None
+
+
+class _LivePrinter:
+    """边生成边打：首片之前补缩进，最后补一个换行。
+
+    不做任何标注——此刻还不知道这段文字是「Thought」还是「最终答案」，
+    那是拿到完整消息之后才知道的事。硬贴一个标签反而会贴错。
+    """
+
+    def __init__(self) -> None:
+        self._started = False
+
+    def __call__(self, text: str) -> None:
+        if not text:
+            return
+        if not self._started:
+            print("  ", end="", flush=True)
+            self._started = True
+        print(text, end="", flush=True)
+
+    def close(self) -> None:
+        if self._started:
+            print()
+
+
 # ---------------------------------------------------------------- LLM
 
 def _make_client() -> OpenAI:
@@ -63,21 +113,47 @@ def _make_client() -> OpenAI:
     return OpenAI(
         api_key=api_key,
         base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1"),
+        # 超时得分开设，一个标量喂不饱这两种情况：
+        #   connect —— 端点不通就该快点失败，10 秒足够
+        #   read    —— 流式下它算的是「两个 token 之间」的间隔（见 _call_llm 的
+        #              注释），不是生成总时长，所以给宽：600 秒 = 连续 10 分钟
+        #              一个字都没吐才算超时
+        # 直接写 timeout=600 会把 connect 也变成 600，服务器不可达就干等 10 分钟。
+        timeout=Timeout(
+            connect=float(os.getenv("LLM_CONNECT_TIMEOUT", "10")),
+            read=float(os.getenv("LLM_READ_TIMEOUT", "600")),
+            write=30.0,
+            pool=10.0,
+        ),
+        # 值和 SDK 默认一致，显式写出来是为了能调、也让读者知道这里有重试。
+        # SDK 只重试连接层错误和 429/5xx，不会重试「模型答了但格式不对」。
+        max_retries=int(os.getenv("LLM_MAX_RETRIES", "2")),
     )
 
 
 def _call_llm(
-    client: OpenAI, model: str, messages: list[dict], tools: list[dict]
-) -> Any:
-    """调一次模型，返回完整的 message 对象。
+    client: OpenAI,
+    model: str,
+    messages: list[dict],
+    tools: list[dict],
+    on_text: Callable[[str], None] | None = None,
+) -> _Message:
+    """调一次模型，流式接收并拼成一条完整消息。
 
     返回对象而不是纯文本，是因为 tool_calls 挂在 message 上而不是 content 里——
     文本模式下那行 `text = message.content` 在这一版里没有意义了。
+
+    流式是为了让调用方边生成边显示：非流式的话，模型逐字生成的整个过程里
+    终端一个字都不显示，看起来就像卡死了。on_text 每收到一片 content 回调一次。
+
+    Args:
+        on_text: 收到 content 分片时回调，传 None 就只静默拼装（verbose=False 走这条）。
     """
     kwargs: dict = {
         "model": model,
         "messages": messages,
         "max_tokens": int(os.getenv("LLM_MAX_TOKENS", "1024")),
+        "stream": True,
     }
 
     # 工具为空时不要发 tools=[]，有的服务端会因此报错
@@ -89,8 +165,43 @@ def _call_llm(
     if temp != "":
         kwargs["temperature"] = float(temp)
 
-    response = client.chat.completions.create(**kwargs)
-    return response.choices[0].message
+    text_parts: list[str] = []
+    reason_parts: list[str] = []
+    # tool_call 是分片下发的：同一个 index 的多片要拼起来，所以先按 index 归并
+    slots: dict[int, dict] = {}
+
+    for chunk in client.chat.completions.create(**kwargs):
+        if not chunk.choices:
+            continue  # 末尾那片只带 usage，没有 choices
+        delta = chunk.choices[0].delta
+
+        if delta.content:
+            text_parts.append(delta.content)
+            if on_text:
+                on_text(delta.content)
+
+        # 推理型模型把思考放在这个字段里，最后取答案时要用（见 _final_text）
+        if getattr(delta, "reasoning_content", None):
+            reason_parts.append(delta.reasoning_content)
+
+        for call in getattr(delta, "tool_calls", None) or []:
+            # index = 这是本轮第几个 tool_call，不是分片序号
+            slot = slots.setdefault(call.index, {"id": "", "name": "", "arguments": ""})
+            if call.id:
+                slot["id"] = call.id
+            if call.function is not None:
+                # name 正常只在首片出现且是完整的，用 += 也能兼容被拆开的情况
+                slot["name"] += call.function.name or ""
+                slot["arguments"] += call.function.arguments or ""
+
+    return _Message(
+        content="".join(text_parts) or None,
+        tool_calls=[
+            _ToolCall(id=slot["id"], function=_Function(slot["name"], slot["arguments"]))
+            for _, slot in sorted(slots.items())
+        ] or None,
+        reasoning_content="".join(reason_parts) or None,
+    )
 
 
 def _final_text(message: Any) -> str:
@@ -160,19 +271,23 @@ def run_agent(
     model = model or os.getenv("LLM_MODEL", "deepseek-v4-flash")
     tools = to_openai_tools()
 
-    for _ in range(max_steps):
-        message = _call_llm(client, model, state.messages, tools)
+    # turn 数的是**模型调用次数**，和 max_steps 对齐；而 step.index 数的是
+    # 工具执行次数（一轮返回 3 个并行 tool_call 就是 3 个 step），两者会分叉。
+    for turn in range(1, max_steps + 1):
+        # 表头要先打，再流式——不然模型吐出来的文字会冒在 "── step N ──" 上面，
+        # 看着像是属于上一步的。
+        printer = _LivePrinter() if verbose else None
+        if verbose:
+            print(f"\n── step {turn} ──")
+
+        message = _call_llm(client, model, state.messages, tools, on_text=printer)
+        if printer:
+            printer.close()
 
         # 没有 tool_calls = 模型认为信息够了，这条消息本身就是最终答案
         if not message.tool_calls:
             state.final_answer = _final_text(message)
-            step = state.add_step(
-                thought="",
-                action="finish",
-                action_input=state.final_answer,
-            )
-            if verbose:
-                _print_step(step)
+            state.add_step(thought="", action="finish", action_input=state.final_answer)
             break
 
         # 带 tool_calls 的 assistant 消息必须原样回填进历史。少了它，下一轮
@@ -219,12 +334,12 @@ def run_agent(
 
 
 def _print_step(step: Step) -> None:
-    print(f"\n── step {step.index} ──")
-    if step.thought:
-        print(f"  Thought     : {step.thought}")
-    if step.action == "finish":
-        print(f"  Finish      : {step.action_input}")
-        return
+    """只打 step 的结构化字段。
+
+    表头和模型自己说的话都不在这里：表头由 run_agent 在调模型**之前**打
+    （要赶在流式输出前面），模型的话也已经边生成边打过了——在这里再打一遍
+    就是把同一段文字输出两次。finish 那一步同理，答案已经流式显示过。
+    """
     print(f"  Action      : {step.action}")
     if step.action_input:
         print(f"  Action Input: {step.action_input}")

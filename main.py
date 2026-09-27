@@ -28,8 +28,10 @@ def _fix_windows_console() -> None:
 
 
 def _solve(task: str) -> None:
-    state = run_agent(task)
-    print(f"\n{'=' * 60}\n最终答案：{state.final_answer}\n{'=' * 60}")
+    # 答案由 run_agent 边生成边流式打出来了，这里不再重打一遍——
+    # 否则同一段文字在终端出现两次。verbose=False 是给「要 state 不要输出」
+    # 的调用方的，那时自己去读 state.final_answer。
+    run_agent(task, verbose=True)
 
 
 def main() -> None:
