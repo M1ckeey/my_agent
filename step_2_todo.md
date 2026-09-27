@@ -142,8 +142,48 @@ OpenAI(api_key=..., base_url=..., timeout=..., max_retries=...)
 
 ---
 
+## 📌 性能优化（已选中，待做）
+
+### web_search 复用连接
+
+单次调用的固定成本实测（2026-09-27，本机）：
+
+| 服务 | DNS | TCP | TLS | 合计 |
+| --- | --- | --- | --- | --- |
+| `api.deepseek.com` | 24 ms | 25 ms | 48 ms | **97 ms** |
+| `api.tavily.com` | 23 ms | 378 ms | **1236 ms** | **1637 ms** |
+| `export.arxiv.org` | 17 ms | 1252 ms | 602 ms | 1871 ms |
+
+Tavily 的 TLS 握手单独就 1.24 秒。而 `_post_json` 用的是
+`urllib.request.urlopen`（`web_search.py:48`），**每次新建连接、不复用**——
+这 1.6 秒每次全额支付，还没开始传数据就先花掉。
+
+改法：模块级持有一个 `http.client.HTTPSConnection` 跨调用复用，出错时重连。
+纯标准库，不引第三方依赖（符合 `web_search.py:3-4` 的原则）。
+
+顺带两点：
+- openai SDK 底层是 httpx，自带连接池，所以 **LLM 调用不受此影响**（97ms 只付一次）
+- Tavily 的 `include_answer: True`（`web_search.py:79`）会让**服务端多跑一遍 LLM**
+  生成摘要才返回，这是握手之外的另一层固定延迟，是否保留可以另议
+
+### 流式输出
+
+`_call_llm`（`loop.py:92`）用的是非流式 `create()`，必须等整段生成完才返回。
+VLN 那题最终答案 600+ token，模型在逐字生成，但终端**一个字都不显示**——
+它一直在工作，只是看不见。这是「体感卡住」的主因。
+
+改法：`stream=True`，边生成边打印。
+
+**一个坑要先想好**：`_print_step` 现在会把 `content` 当 Thought 再打一遍
+（`loop.py:198` 取 content、`:223` 再 print），流式之后同一段文字会被打两次。
+要么流式时不逐字打 Thought、要么打完就跳过 `_print_step` 的 Thought 那段。
+
+---
+
 ## 建议的修复顺序
 
-1. **`_call_llm` 配 timeout + max_retries** —— 一行，收益最大
-2. **`required` 用起来或删掉** —— 消除「生成但没人读」的死代码
-3. **第 7 项** —— 属于阶段二后半，单独开工
+1. **web_search 复用连接** —— 每次省 ~1.6 秒，纯标准库
+2. **流式输出** —— 不省时间，但消除「卡住」的体感
+3. **`_call_llm` 配 timeout + max_retries** —— 一行，收益最大
+4. **`required` 用起来或删掉** —— 消除「生成但没人读」的死代码
+5. **第 7 项** —— 属于阶段二后半，单独开工
