@@ -4,29 +4,34 @@
 
 三个文件：`agent/loop.py`（控制流）、`agent/state.py`（状态）、`tools/calculator.py`（唯一的工具）。
 
+> **后续变更**：加子 agent（`agent/subagent.py`）时，`loop.py` 里的 LLM 调用层
+> 被抽到了 `agent/llm.py`（子 agent 也要调模型，两边共用），工具执行被搬到了
+> `tools.run_tool()`。所以本文里凡是标注 `loop.py` 行号的地方，都已按拆分后的
+> 位置更新；`loop.py` 现在只剩控制流。详见 [step3.md](step3.md)。
+
 ## 一、循环
 
-`run_agent`（`loop.py:247`）就是一个 `for`，每轮四件事：
+`run_agent`（`loop.py:84`）就是一个 `for`，每轮四件事：
 
 | # | 做什么 | 位置 |
 | --- | --- | --- |
-| 1 | 调模型，带上 `tools=[...]` | `_call_llm`（`:134`），`for turn in range(1, max_steps+1)`（`:276`） |
-| 2 | 没有 `tool_calls`？→ 这条消息就是最终答案，结束 | `:288` |
-| 3 | 有 → 逐个执行，结果作为 `role:"tool"` 消息回填 | `:314` |
+| 1 | 调模型，带上 `tools=[...]` | `call_llm`（`llm.py:109`），`for turn in range(1, max_steps+1)`（`loop.py:112`） |
+| 2 | 没有 `tool_calls`？→ 这条消息就是最终答案，结束 | `loop.py:124` |
+| 3 | 有 → 逐个执行，结果作为 `role:"tool"` 消息回填 | `loop.py:136` |
 | 4 | 回到 1 | — |
 
 **终止条件是内建的，不需要约定。** 判据就是「有没有 `tool_calls`」：
 
 ```python
 if not message.tool_calls:
-    state.final_answer = _final_text(message)
+    state.final_answer = final_text(message)
     break
 ```
 
 这里没有「finish 动作」。文本模式得让模型显式说 `Action: finish`，因为那时循环
 分不清「一段文本」和「一个调用」；而 `tool_calls` 的有无本身就是判据。
 
-**刹车是 `max_steps=8`**（`:250`）：跑满还没 break，就返回「达到最大步数，任务未完成」。
+**刹车是 `max_steps=8`**（`loop.py:87`）：跑满还没 break，就返回「达到最大步数，任务未完成」。
 
 **一轮可以返回多个 `tool_call`**（并行调用）。回填时每个 `tool_call_id` 必须配
 **有且只有一条** `role:"tool"` 消息，少了下一轮服务端直接报错。

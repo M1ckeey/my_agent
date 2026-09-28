@@ -10,6 +10,34 @@ import ast
 import math
 import operator
 
+# `**` 是唯一能从小输入炸出巨大结果的运算：`9**9**9` 只有 6 个字符，结果却有约
+# 3.7 亿位十进制数字。算大整数乘法时 CPython 不释放 GIL，所以它会连**并行的子
+# agent 线程一起冻住**，而且中途不可打断——delegate 上线后这一条从「自己卡住」
+# 升级成「拖死整个进程」，必须堵。
+#
+# 上界按结果的**位数**定，不按指数定。只看指数是不够的：`(10**100)**100000` 的
+# 指数只是 100000，看着很乖，结果却是 10 的 1000 万次方。对 |base| >= 2，结果
+# 的二进制位数约等于 exp * log2(|base|)，这里用 exp * base.bit_length() 估算——
+# 略偏大、偏保守，对一个「防止挂死」的闸门来说正合适。
+_MAX_POW_BITS = 1_000_000  # 约 30 万位十进制，实测算完是毫秒级
+
+
+def _pow(base: float, exp: float, mod: float | None = None) -> float:
+    """带规模闸门的幂运算，`**` 和 pow() 共用。
+
+    三参数的 pow(base, exp, mod) 走模幂，中间结果不膨胀，不用拦。
+    """
+    if mod is None and isinstance(base, int) and isinstance(exp, int) and abs(base) > 1:
+        estimated = abs(exp) * base.bit_length()
+        if estimated > _MAX_POW_BITS:
+            raise ValueError(
+                f"{base} 的 {exp} 次方结果约有 {estimated // 3} 位十进制数字，算不完。"
+                f"指数请控制在 {_MAX_POW_BITS // base.bit_length()} 以内，"
+                f"或者改用对数、直接给估算值。"
+            )
+    return pow(base, exp) if mod is None else pow(base, exp, mod)
+
+
 _BIN_OPS = {
     ast.Add: operator.add,
     ast.Sub: operator.sub,
@@ -17,7 +45,7 @@ _BIN_OPS = {
     ast.Div: operator.truediv,
     ast.FloorDiv: operator.floordiv,
     ast.Mod: operator.mod,
-    ast.Pow: operator.pow,
+    ast.Pow: _pow,
 }
 
 _UNARY_OPS = {
@@ -30,7 +58,7 @@ _FUNCS = {
     "round": round,
     "min": min,
     "max": max,
-    "pow": pow,
+    "pow": _pow,
     "sqrt": math.sqrt,
 }
 

@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -57,17 +58,32 @@ _BAN_SECONDS = 180.0
 _last_request_at: float = 0.0
 _banned_until: float = 0.0
 
+# 限速器和熔断器都是「先读后写」的共享状态，两者都必须串行。
+#
+# 原来这里没有锁，单线程时完全正确；delegate 上线后 4 个子 agent 会同时进来，
+# 于是 `gap = now - _last_request_at` 会同时算出「离上次够久了」，几个请求一起
+# 发出去——实测 3 个请求挤在 1 毫秒内，而 _MIN_INTERVAL_SECONDS 是 3 秒。后果比
+# web_search 那边的撞车重得多：arXiv 的封禁是**粘性**的（见模块 docstring），
+# 一次 delegate 就足以把整个进程的 arXiv 通道封掉几分钟。
+#
+# 为什么这里的锁要**连发请求一起罩住**——web_search 那边是反过来的（用了
+# threading.local，不加锁）：arXiv 的规则是「每 3 秒最多一个请求」，并行从来就
+# 不是它的可选项，四个线程本来就只能一个接一个地发。串行化不损失任何本来就不
+# 存在的并行，却把「4 个请求同时冲线」变成「4 个请求各隔 3 秒」，也就是用 12 秒
+# 等待换掉 180 秒封禁。这笔账怎么算都值。
+_rate_lock = threading.Lock()
+
 
 def _text(node: ET.Element, path: str) -> str:
     return (node.findtext(path) or "").strip()
 
 
-def _fetch(params: dict, timeout: float = 30.0) -> ET.Element:
-    """发一次查询并解析 XML。请求前限速；撞上限流先退避，退避全败就熔断。"""
-    global _last_request_at, _banned_until
+def _raise_if_banned() -> None:
+    """在熔断窗口内不发请求，直接失败。
 
-    # 熔断窗口内不发请求，直接失败。发了也是白挨——封禁期间正常请求一样被挡，
-    # 而且这次尝试本身又会刷新封禁的到期时间。
+    发了也是白挨——封禁期间正常请求一样被挡，而且这次尝试本身又会刷新封禁的
+    到期时间。调用方必须已经持有 _rate_lock，否则读到的是一个随时会变的旧值。
+    """
     remaining = _banned_until - time.monotonic()
     if remaining > 0:
         raise RuntimeError(
@@ -76,42 +92,62 @@ def _fetch(params: dict, timeout: float = 30.0) -> ET.Element:
             f"可以改用 web_search 先拿到大致信息，或者等窗口过去。"
         )
 
+
+def _fetch(params: dict, timeout: float = 30.0) -> ET.Element:
+    """发一次查询并解析 XML。请求前限速；撞上限流先退避，退避全败就熔断。
+
+    限速、熔断检查和发请求整段串行，原因见 _rate_lock 的注释。
+    """
+    global _last_request_at, _banned_until
+
     url = f"{_API_URL}?{urllib.parse.urlencode(params)}"
     last_status: int | None = None
 
     for wait in (0.0, *_RETRY_WAITS):
+        # 退避的睡眠放在锁**外**：那几秒里别的线程完全有资格发自己的请求
+        # （它自带 3 秒限速），没道理陪着一起干等。
         if wait:
             time.sleep(wait)
 
-        # 和上一次请求拉开间隔。这是防限流的关键——撞墙之后再退避是被动的，
-        # 而且一旦被封就是几分钟起步。
-        gap = time.monotonic() - _last_request_at
-        if gap < _MIN_INTERVAL_SECONDS:
-            time.sleep(_MIN_INTERVAL_SECONDS - gap)
-        _last_request_at = time.monotonic()
+        with _rate_lock:
+            # 熔断检查放在锁内，而且**每轮重试都重查**。进函数时查一次是不够的：
+            # 兄弟线程可能刚吃完退避全败、把封禁窗口写进去，而本线程还在锁外睡
+            # _RETRY_WAITS 里的大觉，醒来会照着进函数时的旧判断继续打，白等一场
+            # 还刷新封禁——VLN 那次就是这么栽的。
+            _raise_if_banned()
 
-        try:
-            request = urllib.request.Request(
-                url,
-                headers={
-                    "User-Agent": _USER_AGENT,
-                    "Accept": "application/atom+xml",
-                },
-            )
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                return ET.fromstring(response.read())
-        except urllib.error.HTTPError as exc:
-            # 406 / 503 是 arXiv 的限流表达，值得重试；其他错误重试没意义
-            if exc.code in (406, 503):
-                last_status = exc.code
-                continue
-            detail = exc.read().decode("utf-8", errors="replace")[:200]
-            raise RuntimeError(f"arXiv 返回 HTTP {exc.code}：{detail}") from exc
-        except urllib.error.URLError as exc:
-            raise RuntimeError(f"连不上 arXiv：{exc.reason}") from exc
+            # 和上一次请求拉开间隔。这是防限流的关键——撞墙之后再退避是被动的，
+            # 而且一旦被封就是几分钟起步。
+            gap = time.monotonic() - _last_request_at
+            if gap < _MIN_INTERVAL_SECONDS:
+                time.sleep(_MIN_INTERVAL_SECONDS - gap)
+            _last_request_at = time.monotonic()
 
-    # 退避全败 → 判定为粘性封禁，记下到期时间，接下来几分钟不再发请求
-    _banned_until = time.monotonic() + _BAN_SECONDS
+            try:
+                request = urllib.request.Request(
+                    url,
+                    headers={
+                        "User-Agent": _USER_AGENT,
+                        "Accept": "application/atom+xml",
+                    },
+                )
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    return ET.fromstring(response.read())
+            except urllib.error.HTTPError as exc:
+                # 406 / 503 是 arXiv 的限流表达，值得重试；其他错误重试没意义
+                if exc.code in (406, 503):
+                    last_status = exc.code
+                    continue
+                detail = exc.read().decode("utf-8", errors="replace")[:200]
+                raise RuntimeError(f"arXiv 返回 HTTP {exc.code}：{detail}") from exc
+            except urllib.error.URLError as exc:
+                raise RuntimeError(f"连不上 arXiv：{exc.reason}") from exc
+
+    # 退避全败 → 判定为粘性封禁，记下到期时间，接下来几分钟不再发请求。
+    # 这句也必须进锁：否则兄弟线程可以在「本线程判定封禁」和「写入 _banned_until」
+    # 之间拿到锁、读到旧值、再发一个请求出去，正好把封禁刷新一遍。
+    with _rate_lock:
+        _banned_until = time.monotonic() + _BAN_SECONDS
     waits = "、".join(f"{wait:g}s" for wait in _RETRY_WAITS)
     raise RuntimeError(
         f"arXiv 限流了（HTTP {last_status}，已分别等 {waits} 后重试，仍被挡）。"

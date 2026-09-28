@@ -3,10 +3,13 @@
 刻意只用标准库发请求，不引第三方 SDK——项目里除了 openai 和 python-dotenv
 不想再加依赖，而且这一层薄到没什么可省的。
 
-连接是**跨调用复用**的，所以不用 urllib.request.urlopen：那个每次都会新建
-连接，而 Tavily 在境外，实测一次 TLS 握手要 1.2 秒（DNS 23ms + TCP 378ms +
-TLS 1236ms），同一轮 agent 里搜第二次、第三次等于白送这笔钱。改成模块级持有
-一个 HTTPSConnection 之后，只有第一次付握手钱。
+连接是**复用**的，所以不用 urllib.request.urlopen：那个每次都会新建连接，而
+Tavily 在境外，实测一次 TLS 握手要 1.2 秒（DNS 23ms + TCP 378ms + TLS 1236ms），
+同一轮 agent 里搜第二次、第三次等于白送这笔钱。
+
+复用的粒度是**每线程一份**，不是进程一份。原因见 _get_connection 的注释——
+delegate 之后这个工具会被多个子 agent 线程同时调用，而 HTTPSConnection 不是
+线程安全的。
 
 单独跑这个模块要先自己 load_dotenv；通过 agent 跑的话，agent/loop.py
 导入时已经把 .env 读进来了，所以下面是在**调用时**读环境变量而不是导入时，
@@ -18,6 +21,7 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import threading
 import time
 
 _HOST = "api.tavily.com"
@@ -42,23 +46,49 @@ _RETRY_STATUSES = frozenset({500, 502, 503, 504})
 _RETRY_BACKOFF = 1.0
 
 
-# 进程内复用的连接。None = 还没建，或者刚被判定不可用、下次要重连。
-_connection: http.client.HTTPSConnection | None = None
+# 每个线程一份的连接。属性不存在 = 还没建，或者刚被判定不可用、下次要重连。
+#
+# 这里原本是一个模块级全局变量，单线程时完全正确。delegate 上线后 4 个子 agent
+# 会同时进这个模块，而 http.client.HTTPSConnection 不是线程安全的：同一个连接上
+# 并发发请求，后到的那次会拿到 CannotSendRequest，而那句报错又被 _post_json 的
+# `except (HTTPException, OSError): continue` 吞掉当成「连接过期」重试，模型最后
+# 只看到一句「连不上搜索服务」，查不出真正的原因。
+#
+# 为什么用 threading.local 而不是加锁：加锁得把 request + getresponse 整段串起来，
+# 而 web_search 是这几个工具里最慢的（一个完整网络往返），串行化等于把 delegate
+# 的并行整个废掉。每线程一份则是「谁并发谁自己付握手钱」——ThreadPoolExecutor 会
+# 复用线程，所以**跨步**的复用仍然成立，这正是原设计想要的效果，只是粒度从
+# 「进程」改成了「线程」。
+_local = threading.local()
 
 
 def _get_connection(timeout: float) -> http.client.HTTPSConnection:
-    """拿到复用的连接，没有就建一个。
+    """拿到**本线程**复用的连接，没有就建一个。
 
     timeout 变了要换新连接——HTTPSConnection 的超时在构造时就写死在 socket 上，
     建完改不了。
     """
-    global _connection
-    if _connection is not None and _connection.timeout != timeout:
-        _connection.close()
-        _connection = None
-    if _connection is None:
-        _connection = http.client.HTTPSConnection(_HOST, timeout=timeout)
-    return _connection
+    connection = getattr(_local, "connection", None)
+    if connection is not None and connection.timeout != timeout:
+        connection.close()
+        connection = None
+    if connection is None:
+        connection = http.client.HTTPSConnection(_HOST, timeout=timeout)
+        _local.connection = connection
+    return connection
+
+
+def _drop_connection() -> None:
+    """丢掉本线程的连接，下次调用重连。
+
+    只动本线程的。原来的写法是 `global _connection; _connection = None`——一个
+    线程失败时会把这个全局从别的线程手里抽走，那个线程下一次 connection.request()
+    就是 AttributeError: 'NoneType'，一个「重试」反而炸出了新异常。
+    """
+    connection = getattr(_local, "connection", None)
+    if connection is not None:
+        connection.close()  # 原来漏了这句，只把引用置空，socket 要等 GC 才关
+        _local.connection = None
 
 
 def _post_json(payload: dict, api_key: str, timeout: float) -> dict:
@@ -66,8 +96,6 @@ def _post_json(payload: dict, api_key: str, timeout: float) -> dict:
 
     换搜索服务商的话，改这个函数和上面的 _HOST / _PATH 就够，web_search 不用动。
     """
-    global _connection
-
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -89,7 +117,7 @@ def _post_json(payload: dict, api_key: str, timeout: float) -> dict:
             response = connection.getresponse()
             raw = response.read().decode("utf-8", errors="replace")
         except (http.client.HTTPException, OSError) as exc:
-            _connection = None
+            _drop_connection()
             last_error = RuntimeError(f"连不上搜索服务：{exc}")
             continue
 

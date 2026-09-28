@@ -5,7 +5,7 @@
   messages  OpenAI chat 格式的对话历史，每次请求原样发给模型
   steps     结构化轨迹，给人看、给日志用、给后面阶段做评测用
 
-两个视图不冗余：moves 是机器要的，steps 是人要的。阶段二接上下文压缩时，
+两个视图不冗余：messages 是机器要的，steps 是人要的。阶段二接上下文压缩时，
 大概率是压缩 messages 但保留 steps。
 """
 

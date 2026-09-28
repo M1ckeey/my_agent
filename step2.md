@@ -6,10 +6,10 @@
 | --| ---         | --- | --- |
 | 1 | tool schema | ✅ | `base.py:94` + `:196` |
 | 2 | 参数校验     | ✅ | 值：`coerce`（`base.py:157`）；必填：`required` 发给模型 |
-| 3 | tool error  | ✅ | `loop.py:216` |
-| 4 | timeout     | ✅ | 三个工具 30s；LLM connect 10s / read 600s（`loop.py:122`） |
+| 3 | tool error  | ✅ | `run_tool`（`tools/__init__.py:61`） |
+| 4 | timeout     | ✅ | 三个工具 30s；LLM connect 10s / read 600s（`llm.py:81`） |
 | 5 | 重试        | ✅ | 三者失败模式不同，各自实现（见第六节） |
-| 6 | 最大循环次数 | ✅ | `loop.py:250` `max_steps=8` |
+| 6 | 最大循环次数 | ✅ | `loop.py:87` `max_steps=8` |
 | 7 | tool result 太长 | ❌ | 只有单条截断 |
 
 ---
@@ -94,7 +94,7 @@ TOOLS = {..., "weather": Tool.of(weather)}
 
 ## 五、失败兜底
 
-`_run_tool`（`loop.py:216`）四道防线，**全部返回错误文本，无一处 raise**：
+`run_tool`（`tools/__init__.py:61`）四道防线，**全部返回错误文本，无一处 raise**：
 
 | 情况 | 回填内容 |
 | --- | --- |
@@ -117,7 +117,7 @@ arxiv 连败 3 次，模型自己换查询词、最后改用 `web_search` 拿到
 
 没抽统一重试层是有意的——三者失败模式完全不同。
 
-**LLM 的超时要分开设**（`loop.py:122`）。一个标量喂不饱两种情况：`read` 在流式下
+**LLM 的超时要分开设**（`llm.py:81`）。一个标量喂不饱两种情况：`read` 在流式下
 算的是"两个 token 之间"的间隔，不是生成总时长，所以要宽（600s = 连续 10 分钟
 没吐字）；而 `connect` 必须短，端点不通就该 10 秒内失败。写成 `timeout=600`
 会把 connect 也变成 600，服务器不可达就干等 10 分钟。
@@ -147,7 +147,7 @@ arxiv 连败 3 次，模型自己换查询词、最后改用 `web_search` 拿到
 
 ### 流式输出
 
-原来非流式（`loop.py:134`）——模型生成 600+ token 期间终端全黑，像卡死。
+原来非流式（`llm.py:109`）——模型生成 600+ token 期间终端全黑，像卡死。
 改成 `stream=True`。
 
 **底座是 SSE（Server-Sent Events），不是「把 JSON 切块发」。** 请求发出后服务端
