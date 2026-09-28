@@ -19,6 +19,7 @@ from __future__ import annotations
 from .arxiv_search import arxiv_search
 from .base import Tool
 from .calculator import calculator
+from .read_file import read_file
 from .web_search import web_search
 
 # 无条件注册，哪怕没配 TAVILY_API_KEY。
@@ -29,6 +30,7 @@ TOOLS: dict[str, Tool] = {
     "calculator": Tool.of(calculator),
     "web_search": Tool.of(web_search),
     "arxiv_search": Tool.of(arxiv_search),
+    "read_file": Tool.of(read_file),
 }
 
 

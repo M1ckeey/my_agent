@@ -89,7 +89,8 @@ my_agent/
     ├── __init__.py        # 工具注册表：TOOLS + to_openai_tools()
     ├── calculator.py      # 计算器（ast 白名单求值，不用 eval）
     ├── web_search.py      # 网页搜索（Tavily API）
-    └── arxiv_search.py    # arXiv 论文搜索（公开 API，无需 key）
+    ├── arxiv_search.py    # arXiv 论文搜索（公开 API，无需 key）
+    └── read_file.py       # 读文件（限项目目录内，带行号分页；压缩落盘结果的回收口）
 ```
 
 ---
