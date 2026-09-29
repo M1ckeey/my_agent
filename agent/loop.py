@@ -22,6 +22,7 @@ from prompts import MAIN_SYSTEM
 from tools import run_tool, to_openai_tools
 
 from .llm import assistant_message, call_llm, final_text, get_client
+from .hooks import install_default_hooks, trigger_hooks
 from .state import AgentState, Step
 
 # 提示词在 prompts.py（项目根目录）。放那儿是因为这个文件 import 了 tools，
@@ -76,6 +77,8 @@ def run_agent(
             {"role": "user", "content": task},
         ],
     )
+    install_default_hooks()
+    trigger_hooks("UserPromptSubmit", task)
 
     client = get_client()
     model = model or os.getenv("LLM_MODEL", "deepseek-v4-flash")
@@ -90,6 +93,7 @@ def run_agent(
         if verbose:
             print(f"\n── step {turn} ──")
 
+        trigger_hooks("BeforeModel", state)
         message = call_llm(client, model, state.messages, tools, on_text=printer)
         if printer:
             printer.close()
@@ -97,6 +101,11 @@ def run_agent(
         # 没有 tool_calls = 模型认为信息够了，这条消息本身就是最终答案
         if not message.tool_calls:
             state.final_answer = final_text(message)
+            continuation = trigger_hooks("Stop", state)
+            if continuation is not None:
+                state.final_answer = None
+                state.messages.append({"role": "user", "content": str(continuation)})
+                continue
             state.add_step(thought="", action="finish", action_input=state.final_answer)
             break
 
@@ -108,12 +117,18 @@ def run_agent(
         # 每个 tool_call_id 都必须有且只有一条对应的 tool 消息
         thought = (message.content or "").strip()
         for call in message.tool_calls:
-            observation = run_tool(call.function.name, call.function.arguments)
+            blocked = trigger_hooks("PreToolUse", state, call)
+            if blocked is not None:
+                observation = str(blocked)
+            else:
+                observation = run_tool(call.function.name, call.function.arguments)
             state.messages.append({
                 "role": "tool",
                 "tool_call_id": call.id,
                 "content": observation,
             })
+            if blocked is None:
+                trigger_hooks("PostToolUse", state, call, observation)
             step = state.add_step(
                 thought=thought,
                 action=call.function.name,
@@ -125,7 +140,7 @@ def run_agent(
     else:
         # 循环跑满还没 break
         state.final_answer = f"（达到最大步数 {max_steps}，任务未完成）"
-
+        trigger_hooks("Stop", state)
     return state
 
 

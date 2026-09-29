@@ -36,10 +36,23 @@ class Step:
 
 
 @dataclass
+class ResearchFinding:
+    """一条可供后续整理和压缩的结构化研究发现。"""
+
+    content: str
+    source: str
+    source_type: str
+    query: str = ""
+    task_id: str = ""
+    confidence: float = 0.5
+
+
+@dataclass
 class AgentState:
     task: str
     messages: list[dict] = field(default_factory=list)
     steps: list[Step] = field(default_factory=list)
+    findings: list[ResearchFinding] = field(default_factory=list)
     final_answer: str | None = None
 
     @property
@@ -63,6 +76,28 @@ class AgentState:
         )
         self.steps.append(step)
         return step
+
+    def add_finding(
+        self,
+        *,
+        content: str,
+        source: str,
+        source_type: str,
+        query: str = "",
+        task_id: str = "",
+        confidence: float = 0.5,
+    ) -> ResearchFinding:
+        """记录一条工具结果，供上下文管理和最终汇总使用。"""
+        finding = ResearchFinding(
+            content=content,
+            source=source,
+            source_type=source_type,
+            query=query,
+            task_id=task_id,
+            confidence=confidence,
+        )
+        self.findings.append(finding)
+        return finding
 
     def trace(self) -> str:
         """把整条轨迹拼成人看的文本。"""

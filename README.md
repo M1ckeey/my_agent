@@ -89,6 +89,19 @@ delegate
 
 详见 [step3.md](step3.md)。
 
+### Step 4：结构化研究发现与上下文管理
+
+目标是把工具结果从普通文本变成可去重、可截断、可压缩的 `ResearchFinding`，为后续的上下文压缩和 LangGraph 状态管理打基础。
+
+这一阶段实现了：
+
+- 主 Agent 和子 Agent 的结构化 findings
+- 按来源、查询和内容去重
+- finding 数量和单条内容长度限制
+- `ContextManager` 整理研究材料
+
+详见 [step4.md](step4.md)。
+
 ## 快速开始
 
 安装依赖：
@@ -134,6 +147,7 @@ tools/               工具实现与注册表
 step1.md             最小 ReAct Agent
 step2.md             多工具与统一接口
 step3.md             Research Agent 与子 Agent
+step4.md             结构化研究发现与上下文管理
 ```
 
 ## 当前限制

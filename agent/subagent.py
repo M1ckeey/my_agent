@@ -21,12 +21,14 @@ from __future__ import annotations
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from prompts import SUBAGENT_SYSTEM
 from tools import run_tool, to_openai_tools
 
+from .hooks import install_default_hooks, trigger_hooks
 from .llm import assistant_message, call_llm, final_text, get_client
+from .state import AgentState, ResearchFinding
 
 # 子 agent 能用的工具。**不含 delegate / plan_research**：前者防递归，后者是主
 # agent 的职责——子任务已经是拆好的，不需要再拆一次。
@@ -45,6 +47,7 @@ class SubagentResult:
     answer: str = ""
     steps: int = 0
     error: str | None = None
+    findings: list[ResearchFinding] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -63,36 +66,66 @@ def run_subagent(task: str, *, model: str, max_steps: int) -> SubagentResult:
         {"role": "system", "content": SUBAGENT_SYSTEM},
         {"role": "user", "content": task},
     ]
+    sub_state = AgentState(task=task, messages=messages)
+    install_default_hooks()
+    trigger_hooks("UserPromptSubmit", task)
 
     for turn in range(1, max_steps + 1):
         try:
             # on_text 不传 → 静默拼装。并行时多个子 agent 同时流式写终端会糊成一团。
+            trigger_hooks("BeforeModel", sub_state)
             message = call_llm(client, model, messages, tools)
         except Exception as exc:  # noqa: BLE001
             # 单个子 agent 的网络失败不能拖垮整批（对应 return_exceptions 语义）
-            return SubagentResult(task=task, steps=turn - 1, error=f"{type(exc).__name__}: {exc}")
+            return SubagentResult(
+                task=task,
+                steps=turn - 1,
+                error=f"{type(exc).__name__}: {exc}",
+                findings=sub_state.findings,
+            )
 
         # 没有 tool_calls = 子 agent 认为查清楚了，这条消息就是结论
         if not message.tool_calls:
             answer = final_text(message)
             if not answer:
-                return SubagentResult(task=task, steps=turn, error="子 agent 没有给出结论")
-            return SubagentResult(task=task, answer=answer, steps=turn)
+                return SubagentResult(
+                    task=task,
+                    steps=turn,
+                    error="子 agent 没有给出结论",
+                    findings=sub_state.findings,
+                )
+            continuation = trigger_hooks("Stop", sub_state)
+            if continuation is not None:
+                messages.append({"role": "user", "content": str(continuation)})
+                continue
+            return SubagentResult(task=task, answer=answer, steps=turn, findings=sub_state.findings)
 
         messages.append(assistant_message(message))
         # 一轮里的多个 tool_call 逐个执行、逐个回填：每个 tool_call_id 都必须有
         # 且只有一条对应的 tool 消息。子 agent 的工具集里没有 delegate，所以这里
         # 不会递归。
         for call in message.tool_calls:
+            blocked = trigger_hooks("PreToolUse", sub_state, call)
+            if blocked is not None:
+                observation = str(blocked)
+            else:
+                observation = run_tool(call.function.name, call.function.arguments)
             messages.append(
                 {
                     "role": "tool",
                     "tool_call_id": call.id,
-                    "content": run_tool(call.function.name, call.function.arguments),
+                    "content": observation,
                 }
             )
+            if blocked is None:
+                trigger_hooks("PostToolUse", sub_state, call, observation)
 
-    return SubagentResult(task=task, steps=max_steps, error=f"达到最大步数 {max_steps}，子任务未完成")
+    return SubagentResult(
+        task=task,
+        steps=max_steps,
+        error=f"达到最大步数 {max_steps}，子任务未完成",
+        findings=sub_state.findings,
+    )
 
 
 def run_subagents(
