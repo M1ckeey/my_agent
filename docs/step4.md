@@ -1,6 +1,6 @@
 # 阶段四：Hook 扩展与上下文管理
 
-阶段四开始处理研究结果的生命周期，并加入 Hook 扩展机制。目标是把工具返回的原始文本转换成结构化 finding，再对这些 finding 做去重、限长和数量控制，为后续的摘要压缩与 LangGraph 状态管理打基础。
+阶段四开始处理研究结果的生命周期，并加入 Hook 扩展机制。目标是把工具返回的原始文本转换成结构化 finding，再对这些 finding 做去重、限长和摘要压缩，为外层 LangGraph 状态管理和报告生成提供稳定材料。
 
 ## 一、为什么需要 findings
 
@@ -120,9 +120,7 @@ register_hook("PostToolUse", log_tool)
 
 ## 六、当前边界
 
-当前版本完成的是确定性整理，还没有调用 LLM 生成摘要。因此它能控制 findings 的数量和单条长度，但不会减少已经发送给模型的原始 `messages`。
-
-真实的上下文压缩需要下一步实现：
+当前版本已经支持按来源和任务分组的 LLM 摘要压缩。压缩只在去重后的 findings 超过数量上限时触发，摘要失败会回退到确定性截断。外层状态同时保留 `raw_findings`，因此压缩不会覆盖原始研究材料。
 
 ```text
 同一来源的多条 finding
@@ -132,11 +130,11 @@ fast LLM 摘要
 保留来源和引用信息的压缩 finding
 ```
 
-压缩结果应在写报告前使用，不能覆盖原始调试轨迹。后续如果要压缩 `messages`，还必须保留完整的 `assistant(tool_calls)` 与对应的 `tool` 消息关系。
+压缩结果在写报告前使用，不会修改内层 Agent 的 `messages`。后续如果要压缩 `messages`，还必须保留完整的 `assistant(tool_calls)` 与对应的 `tool` 消息关系。
 
 ## 七、下一步
 
 1. 从网页搜索和 arXiv 结果中提取真实 URL、论文 ID 等来源信息。
-2. 按来源合并 finding，并用 fast LLM 生成摘要。
-3. 将压缩后的 findings 提供给报告生成节点。
-4. 再开始搭建 LangGraph 外层流程。
+2. 将 findings 按子问题归类，并完善报告引用校验。
+3. 为 Critic 接入 LLM 判断和预算硬闸。
+4. 为 LangGraph 增加 checkpoint 与中断恢复。

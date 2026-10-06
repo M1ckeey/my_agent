@@ -132,16 +132,17 @@ critic
 
 | 当前代码 | 后续图结构 |
 | --- | --- |
-| `agent/loop.py` | 内层 ReAct 图 |
+| `agent/loop.py` | 内层手写 ReAct 执行引擎 |
 | `agent/state.py` | 外层和内层的状态定义 |
 | `tools.run_tool()` | Tool 节点 |
 | `plan_research` | Planner 节点 |
-| `delegate` | Researcher 批量节点或子图 |
-| `agent/subagent.py` | 子 Agent ReAct 子图 |
+| `delegate` | Researcher 批量节点 |
+| `agent/subagent.py` | 子 Agent 手写 ReAct 循环 |
 | `messages` | 当前 Agent 的消息上下文 |
 | `steps` | 执行轨迹和调试信息 |
 
-初期可以让 `delegate` 继续作为普通工具，由工具内部的线程池并行运行子 Agent。后续再把每个子 Agent 改成 LangGraph 子图。
+`delegate` 继续作为普通工具，由工具内部的线程池并行运行子 Agent。内层
+ReAct 保留手写实现，外层 LangGraph 只负责研究流程的状态和路由。
 
 ## 6. 推荐的状态划分
 
@@ -207,13 +208,11 @@ class AgentState:
 建议按以下顺序实现：
 
 1. 为工具结果增加结构化的 finding 表示
-2. 把当前 `loop.py` 拆成 LLM 节点、Tool 节点和条件路由
-3. 用 LangGraph 重写主 Agent 的 ReAct 循环
-4. 保留 `delegate` 的线程池实现，先接入外层研究流程
-5. 增加 `plan → research → critic → write` 外层图
-6. 加入 findings 去重和上下文压缩
-7. 将子 Agent 改成独立的 ReAct 子图
-8. 最后再增加 checkpoint、RAG 和长期记忆
+2. 保留当前手写 ReAct，先接入外层研究流程
+3. 增加 `plan → research → critic → write` 外层图
+4. 加入 findings 去重和上下文压缩
+5. 增加 `validate`、预算控制和条件边
+6. 最后再增加 checkpoint、RAG 和长期记忆
 
 ## 9. 设计原则
 

@@ -46,7 +46,7 @@ Agent 可以：
 - `tools/calculator.py`：基于 AST 白名单的安全计算器
 - LLM 流式输出
 
-详见 [step1.md](step1.md)。
+详见 [docs/step1.md](docs/step1.md)。
 
 ### Step 2：多工具与统一接口
 
@@ -71,7 +71,7 @@ plan_research
 delegate
 ```
 
-详见 [step2.md](step2.md)。
+详见 [docs/step2.md](docs/step2.md)。
 
 ### Step 3：Research Agent 与子 Agent
 
@@ -87,9 +87,9 @@ delegate
 - 子任务数量、并发数和步数限制
 - 失败子任务的结果记录
 
-详见 [step3.md](step3.md)。
+详见 [docs/step3.md](docs/step3.md)。
 
-### Step 4：结构化研究发现与上下文管理
+### Step 4：Hook 扩展与上下文管理
 
 目标是把工具结果从普通文本变成可去重、可截断、可压缩的 `ResearchFinding`，为后续的上下文压缩和 LangGraph 状态管理打基础。
 
@@ -100,7 +100,28 @@ delegate
 - finding 数量和单条内容长度限制
 - `ContextManager` 整理研究材料
 
-详见 [step4.md](step4.md)。
+详见 [docs/step4.md](docs/step4.md)。
+
+### Step 5：外层 LangGraph 编排
+
+目标是在手写 ReAct 外层增加完整的研究流程图：
+
+```text
+plan → research → critic → revise/research → write → validate
+```
+
+这一阶段实现了：
+
+- 独立的 `ResearchState`
+- LangGraph 外层研究流程
+- Critic 条件边和补充查询
+- frontier 批量提交和线程池并行执行
+- `plan`、`research`、`critic`、`write`、`validate` 节点日志
+- 写作前 findings 压缩
+- 报告来源校验
+- 报告自动保存到 `reports/`
+
+详见 [docs/step5.md](docs/step5.md)。
 
 ## 快速开始
 
@@ -124,6 +145,7 @@ TAVILY_API_KEY=你的 Tavily Key
 ```bash
 python main.py "123 * 456 再减去 1000 等于多少"
 python main.py "调研 Python 3.13 的主要新特性"
+python main_graph.py "调研 Python 3.13 的主要新特性"
 ```
 
 不带参数时进入交互模式：
@@ -132,28 +154,50 @@ python main.py "调研 Python 3.13 的主要新特性"
 python main.py
 ```
 
+使用外层 LangGraph 研究流程：
+
+```bash
+python main_graph.py
+```
+
+每次通过 `main_graph.py` 完成的研究，会自动保存为 Markdown 文件，位置为：
+
+```text
+reports/YYYYMMDD_HHMMSS_主题.md
+```
+
 `TAVILY_API_KEY` 只在使用网页搜索时需要。通过修改 `LLM_BASE_URL`，也可以接入其他 OpenAI 兼容模型服务。
 
 ## 目录结构
 
 ```text
 main.py              命令行入口
+main_graph.py        LangGraph 外层研究流程入口
 prompts.py           Agent 和规划器提示词
 agent/loop.py        主 Agent 循环
 agent/llm.py         LLM 调用、流式响应和重试
 agent/state.py       对话消息与运行轨迹
+agent/research_state.py 外层研究流程状态
+agent/graph.py       外层 LangGraph 流程图（含 Validator）
 agent/subagent.py    子 Agent 和并行执行
 tools/               工具实现与注册表
-step1.md             最小 ReAct Agent
-step2.md             多工具与统一接口
-step3.md             Research Agent 与子 Agent
-step4.md             结构化研究发现与上下文管理
+docs/step1.md        最小 ReAct Agent
+docs/step2.md        多工具与统一接口
+docs/step3.md        Research Agent 与子 Agent
+docs/step4.md        Hook 扩展与上下文管理
+docs/step5.md        外层 LangGraph 编排
+reports/             自动生成的研究报告
+docs/                架构、步骤和 Harness 文档
 ```
 
 ## 当前限制
 
 - 对话状态只在单次运行中保存
-- 尚未实现通用的上下文压缩
-- 子 Agent 失败后不会自动重新调度
+- 上下文压缩目前只作用于外层 findings，不会压缩内层对话 messages
+- Critic 目前主要使用确定性规则，还没有接入 LLM 语义判断
+- 子 Agent 失败后会记录原因，但不会自动重新调度
+- Writer 可能保留研究过程中的中间材料，尚未专门生成最终成稿
+- Validator 目前只检查来源是否存在，不判断论断是否被来源充分支持
+- LangGraph 还没有接入 checkpoint 和中断恢复
 - 项目目前缺少正式的自动化测试
 
