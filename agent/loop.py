@@ -22,6 +22,7 @@ from prompts import MAIN_SYSTEM
 from tools import run_tool, to_openai_tools
 
 from .llm import assistant_message, call_llm, final_text, get_client
+from .compactor import ConversationCompactor, is_context_length_error
 from .hooks import install_default_hooks, trigger_hooks
 from .state import AgentState, Step
 
@@ -83,6 +84,10 @@ def run_agent(
     client = get_client()
     model = model or os.getenv("LLM_MODEL", "deepseek-v4-flash")
     tools = to_openai_tools()
+    compactor = ConversationCompactor(
+        summary_builder=ConversationCompactor.llm_summary_builder(model),
+    )
+    reactive_retries = 0
 
     # turn 数的是**模型调用次数**，和 max_steps 对齐；而 step.index 数的是
     # 工具执行次数（一轮返回 3 个并行 tool_call 就是 3 个 step），两者会分叉。
@@ -94,7 +99,20 @@ def run_agent(
             print(f"\n── step {turn} ──")
 
         trigger_hooks("BeforeModel", state)
-        message = call_llm(client, model, state.messages, tools, on_text=printer)
+        state.messages[:] = compactor.prepare(state.messages, task)
+        try:
+            message = call_llm(client, model, state.messages, tools, on_text=printer)
+            reactive_retries = 0
+        except Exception as exc:
+            if is_context_length_error(exc) and reactive_retries < 1:
+                if printer:
+                    printer.close()
+                state.messages[:] = compactor.reactive_compact(state.messages, task)
+                reactive_retries += 1
+                continue
+            if printer:
+                printer.close()
+            raise
         if printer:
             printer.close()
 
@@ -116,6 +134,7 @@ def run_agent(
         # 模型一轮可能返回多个 tool_call（并行调用），逐个执行、逐个回填，
         # 每个 tool_call_id 都必须有且只有一条对应的 tool 消息
         thought = (message.content or "").strip()
+        compact_requested = False
         for call in message.tool_calls:
             blocked = trigger_hooks("PreToolUse", state, call)
             if blocked is not None:
@@ -127,6 +146,7 @@ def run_agent(
                 "tool_call_id": call.id,
                 "content": observation,
             })
+            compact_requested = compact_requested or call.function.name == "compact"
             if blocked is None:
                 trigger_hooks("PostToolUse", state, call, observation)
             step = state.add_step(
@@ -137,6 +157,8 @@ def run_agent(
             )
             if verbose:
                 _print_step(step)
+        if compact_requested:
+            state.messages[:] = compactor.compact_history(state.messages, task)
     else:
         # 循环跑满还没 break
         state.final_answer = f"（达到最大步数 {max_steps}，任务未完成）"

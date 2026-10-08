@@ -69,6 +69,7 @@ arxiv_search
 read_file
 plan_research
 delegate
+compact
 ```
 
 详见 [docs/step2.md](docs/step2.md)。
@@ -123,6 +124,22 @@ plan → research → critic → revise/research → write → validate
 
 详见 [docs/step5.md](docs/step5.md)。
 
+### Step 6：会话级上下文压缩
+
+目标是让 Agent 在长任务中持续工作，同时保留被压缩内容的恢复路径。
+
+这一阶段实现了：
+
+- 五步会话压缩流程：转存、归档、旧结果替换、结果适配和历史摘要
+- 工具调用与工具结果配对保护
+- transcript 和大型工具结果落盘
+- 按 `run_id` 和序号保存 transcript，避免多次压缩互相覆盖
+- API 上下文超限后的 reactive compact
+- 可由模型主动调用的 `compact` 工具
+- 压缩次数、字符数和转存结果等运行指标
+
+详见 [docs/step6.md](docs/step6.md)。
+
 ## 快速开始
 
 安装依赖：
@@ -171,33 +188,54 @@ reports/YYYYMMDD_HHMMSS_主题.md
 ## 目录结构
 
 ```text
-main.py              命令行入口
-main_graph.py        LangGraph 外层研究流程入口
-prompts.py           Agent 和规划器提示词
-agent/loop.py        主 Agent 循环
-agent/llm.py         LLM 调用、流式响应和重试
-agent/state.py       对话消息与运行轨迹
-agent/research_state.py 外层研究流程状态
-agent/graph.py       外层 LangGraph 流程图（含 Validator）
-agent/subagent.py    子 Agent 和并行执行
-tools/               工具实现与注册表
-docs/step1.md        最小 ReAct Agent
-docs/step2.md        多工具与统一接口
-docs/step3.md        Research Agent 与子 Agent
-docs/step4.md        Hook 扩展与上下文管理
-docs/step5.md        外层 LangGraph 编排
-reports/             自动生成的研究报告
-docs/                架构、步骤和 Harness 文档
+.
+├── main.py                    命令行入口
+├── main_graph.py              LangGraph 外层研究流程入口
+├── prompts.py                 Agent 和规划器提示词
+├── requirements.txt           Python 依赖
+├── agent/
+│   ├── loop.py                主 Agent 循环
+│   ├── llm.py                 LLM 调用、流式响应和重试
+│   ├── state.py               对话消息与执行轨迹
+│   ├── research_state.py      外层 LangGraph 状态
+│   ├── graph.py               外层研究流程图和 Validator
+│   ├── compactor.py           五步会话级上下文压缩
+│   ├── context.py             ResearchFinding 去重和材料压缩
+│   ├── hooks.py               Agent 生命周期 Hook
+│   └── subagent.py            子 Agent 和并行执行
+├── tools/
+│   ├── __init__.py            工具注册表和统一执行入口
+│   ├── compact.py             主动请求上下文压缩
+│   ├── calculator.py          安全计算器
+│   ├── web_search.py          网页搜索
+│   ├── arxiv_search.py        arXiv 搜索
+│   ├── read_file.py           文件读取
+│   ├── plan.py                研究计划工具
+│   └── delegate.py            子 Agent 调度工具
+├── tests/
+│   ├── test_context.py        研究材料压缩测试
+│   └── test_compactor.py      会话压缩测试
+├── docs/
+│   ├── architecture.md        系统架构
+│   ├── harness.md             Harness 运行说明
+│   ├── step1.md               最小 ReAct Agent
+│   ├── step2.md               多工具与统一接口
+│   ├── step3.md               Research Agent 与子 Agent
+│   ├── step4.md               Hook 扩展与上下文管理
+│   ├── step5.md               外层 LangGraph 编排
+│   └── step6.md               会话级上下文压缩
+├── reports/                   自动生成的研究报告
+├── .task_outputs/             转存的大型工具结果
+└── .transcripts/              压缩前的会话记录
 ```
 
 ## 当前限制
 
-- 对话状态只在单次运行中保存
-- 上下文压缩目前只作用于外层 findings，不会压缩内层对话 messages
+- 对话状态只在单次运行中保存，尚未接入 checkpoint 和中断恢复
+- token 预算还没有统一接入主 Agent、子 Agent 和 LangGraph
 - Critic 目前主要使用确定性规则，还没有接入 LLM 语义判断
 - 子 Agent 失败后会记录原因，但不会自动重新调度
 - Writer 可能保留研究过程中的中间材料，尚未专门生成最终成稿
 - Validator 目前只检查来源是否存在，不判断论断是否被来源充分支持
-- LangGraph 还没有接入 checkpoint 和中断恢复
-- 项目目前缺少正式的自动化测试
+- 当前自动化测试覆盖核心压缩行为，尚未覆盖真实 API 调用和完整长任务运行
 

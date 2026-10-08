@@ -14,6 +14,16 @@
   - [x] 生命周期事件注册和触发
   - [x] 默认 PostToolUse finding 记录
   - [x] 默认 Stop finding 整理
+- [x] 建立会话级上下文压缩骨架
+  - [x] 大型工具结果转存并保留预览
+  - [x] 历史消息归档和 transcript 保存
+  - [x] 压缩时保护 tool_use/tool_result 配对
+  - [x] API 上下文超限后执行一次 reactive compact
+  - [x] 增加主动 `compact` 工具
+  - [x] 超限时接入可回退的 LLM 历史摘要
+  - [x] 记录压缩次数、字符数、归档数和转存数
+  - [x] 使用 run_id 和序号保存 transcript 与工具结果
+  - [x] 完成 Step 6 文档和回归测试
 - [x] 用 LangGraph 编排外层流程
   - [x] 定义独立的 ResearchState
   - [x] 搭建 plan → research → write 最小图

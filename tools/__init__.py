@@ -27,6 +27,7 @@ from collections.abc import Collection
 from .arxiv_search import arxiv_search
 from .base import Tool
 from .calculator import calculator
+from .compact import compact
 from .delegate import delegate
 from .plan import plan_research
 from .read_file import read_file
@@ -38,6 +39,7 @@ from .web_search import web_search
 # 没 key 时让 web_search 自己抛错，错误会变成 Observation 回到模型那里。
 TOOLS: dict[str, Tool] = {
     "calculator": Tool.of(calculator),
+    "compact": Tool.of(compact),
     "web_search": Tool.of(web_search),
     "arxiv_search": Tool.of(arxiv_search),
     "read_file": Tool.of(read_file),
