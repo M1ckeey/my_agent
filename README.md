@@ -201,6 +201,24 @@ reports/YYYYMMDD_HHMMSS_主题.md
 
 `TAVILY_API_KEY` 只在使用网页搜索时需要。通过修改 `LLM_BASE_URL`，也可以接入其他 OpenAI 兼容模型服务。
 
+研究流程还支持以下运行参数：
+
+```env
+RESEARCH_MAX_DEPTH=20
+RESEARCH_MAX_TOKENS=20000
+SUBAGENT_MAX_RETRIES=1
+SUBAGENT_MAX_STEPS=5
+SUBAGENT_MAX_WORKERS=4
+```
+
+其中 `RESEARCH_MAX_DEPTH` 和 `RESEARCH_MAX_TOKENS` 是外层研究预算；任一预算耗尽后，流程会停止继续研究。`SUBAGENT_MAX_RETRIES` 控制单个子 Agent 的失败重试次数。
+
+运行自动化测试：
+
+```bash
+python -m unittest discover -v
+```
+
 ## 目录结构
 
 ```text
@@ -230,7 +248,12 @@ reports/YYYYMMDD_HHMMSS_主题.md
 │   └── delegate.py            子 Agent 调度工具
 ├── tests/
 │   ├── test_context.py        研究材料压缩测试
-│   └── test_compactor.py      会话压缩测试
+│   ├── test_compactor.py      会话压缩测试
+│   ├── test_graph.py          外层图和子问题归属测试
+│   ├── test_subagent_retry.py 子 Agent 重试测试
+│   ├── test_budget.py         预算硬闸测试
+│   ├── test_critic.py         Critic 路由测试
+│   └── test_validator.py      覆盖和来源支持校验测试
 ├── docs/
 │   ├── architecture.md        系统架构
 │   ├── harness.md             Harness 运行说明
@@ -239,7 +262,8 @@ reports/YYYYMMDD_HHMMSS_主题.md
 │   ├── step3.md               Research Agent 与子 Agent
 │   ├── step4.md               Hook 扩展与上下文管理
 │   ├── step5.md               外层 LangGraph 编排
-│   └── step6.md               会话级上下文压缩
+│   ├── step6.md               会话级上下文压缩
+│   └── step7.md               研究流程质量与预算控制
 ├── reports/                   自动生成的研究报告
 ├── .task_outputs/             转存的大型工具结果
 └── .transcripts/              压缩前的会话记录
@@ -248,10 +272,10 @@ reports/YYYYMMDD_HHMMSS_主题.md
 ## 当前限制
 
 - 对话状态只在单次运行中保存，尚未接入 checkpoint 和中断恢复
-- token 预算还没有统一接入主 Agent、子 Agent 和 LangGraph
-- Critic 目前主要使用确定性规则，还没有接入 LLM 语义判断
-- 子 Agent 失败后会记录原因，但不会自动重新调度
-- Writer 可能保留研究过程中的中间材料，尚未专门生成最终成稿
-- Validator 目前只检查来源是否存在，不判断论断是否被来源充分支持
-- 当前自动化测试覆盖核心压缩行为，尚未覆盖真实 API 调用和完整长任务运行
+- token 使用量依赖模型服务返回 `usage.total_tokens`；服务端不返回时无法精确统计
+- Critic 的语义判断失败时会回退到确定性规则
+- 子 Agent 当前只会重试同一任务，不会根据失败原因自动改写查询
+- Validator 主要做材料覆盖和文本匹配，尚未判断事实、数字和来源之间的深层语义关系
+- 尚未接入 LangGraph checkpoint、完整运行轨迹和固定主题质量评测
+- 尚未接入 RAG 知识库和跨会话长期记忆
 
