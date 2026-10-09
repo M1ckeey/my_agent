@@ -35,6 +35,8 @@ class ResearchFinding:
     source_type: str
     query: str = ""
     task_id: str = ""
+    subquestion_id: str = ""
+    token_used: int = 0
     confidence: float = 0.5
 
 
@@ -45,6 +47,7 @@ class AgentState:
     steps: list[Step] = field(default_factory=list)
     findings: list[ResearchFinding] = field(default_factory=list)
     final_answer: str | None = None
+    token_used: int = 0
 
     @property
     def finished(self) -> bool:

@@ -102,6 +102,7 @@ def run_agent(
         state.messages[:] = compactor.prepare(state.messages, task)
         try:
             message = call_llm(client, model, state.messages, tools, on_text=printer)
+            state.token_used += message.total_tokens
             reactive_retries = 0
         except Exception as exc:
             if is_context_length_error(exc) and reactive_retries < 1:

@@ -50,6 +50,7 @@ class Message:
     content: str | None
     tool_calls: list[ToolCall] | None
     reasoning_content: str | None = None
+    total_tokens: int = 0
 
 
 # ---------------------------------------------------------------- 客户端
@@ -243,8 +244,16 @@ def _call_once(
     reason_parts: list[str] = []
     # tool_call 是分片下发的：同一个 index 的多片要拼起来，所以先按 index 归并
     slots: dict[int, dict] = {}
+    total_tokens = 0
 
     for chunk in client.chat.completions.create(**kwargs):
+        usage = getattr(chunk, "usage", None)
+        if usage is not None:
+            value = getattr(usage, "total_tokens", None)
+            if value is None and isinstance(usage, dict):
+                value = usage.get("total_tokens")
+            if value is not None:
+                total_tokens = int(value)
         if not chunk.choices:
             continue  # 末尾那片只带 usage，没有 choices
         delta = chunk.choices[0].delta
@@ -275,6 +284,7 @@ def _call_once(
             for _, slot in sorted(slots.items())
         ] or None,
         reasoning_content="".join(reason_parts) or None,
+        total_tokens=total_tokens,
     )
 
 

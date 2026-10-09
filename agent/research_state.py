@@ -37,6 +37,7 @@ class ResearchState:
     # 循环与预算状态
     depth: int = 0
     token_used: int = 0
+    max_tokens: int = 20000
     max_depth: int = 20
     critic_signal: str = ""
     next_queries: list[dict[str, Any]] = field(default_factory=list)
@@ -99,7 +100,7 @@ class ResearchState:
     @property
     def budget_exhausted(self) -> bool:
         """是否达到外层最大研究深度。"""
-        return self.depth >= self.max_depth
+        return self.depth >= self.max_depth or self.token_used >= self.max_tokens
 
     @property
     def finished(self) -> bool:

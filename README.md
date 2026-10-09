@@ -140,6 +140,22 @@ plan → research → critic → revise/research → write → validate
 
 详见 [docs/step6.md](docs/step6.md)。
 
+### Step 7：研究流程质量与预算控制
+
+目标是让外层研究流程可追踪、可限额，并能检查研究证据是否覆盖报告。
+
+这一阶段实现了：
+
+- findings 与 `subquestion_id` 的关联
+- 失败子 Agent 的有限次数重试和失败原因记录
+- 外层研究步数、子 Agent 步数、重试次数和 token 统计
+- `RESEARCH_MAX_DEPTH` 与 `RESEARCH_MAX_TOKENS` 硬预算
+- 基于 LLM 的 Critic 和确定性回退
+- 子问题覆盖和来源支持校验
+- Writer 按子问题归类研究材料
+
+详见 [docs/step7.md](docs/step7.md)。
+
 ## 快速开始
 
 安装依赖：

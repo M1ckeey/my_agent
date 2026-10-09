@@ -28,8 +28,11 @@ validate  |
 
 from __future__ import annotations
 
+import json
+import os
 import re
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
@@ -37,6 +40,7 @@ from langgraph.graph import END, START, StateGraph
 from tools import plan_research
 
 from .context import ContextManager, Summarizer
+from .llm import call_llm, final_text, get_client
 from .research_state import ResearchState, ResearchSubQuestion
 from .state import ResearchFinding
 from .subagent import run_subagents
@@ -80,7 +84,17 @@ def _default_research(tasks: list[str]) -> Sequence[ResearchFinding]:
     results = run_subagents(tasks)
     findings: list[ResearchFinding] = []
     for result in results:
-        findings.extend(result.findings)
+        if result.findings:
+            findings.extend(
+                replace(
+                    finding,
+                    token_used=(
+                        finding.token_used
+                        or (result.token_used if index == 0 else 0)
+                    ),
+                )
+                for index, finding in enumerate(result.findings)
+            )
         if result.ok and result.answer and not result.findings:
             findings.append(
                 ResearchFinding(
@@ -89,6 +103,7 @@ def _default_research(tasks: list[str]) -> Sequence[ResearchFinding]:
                     source_type="subagent",
                     query=result.task,
                     task_id=result.task,
+                    token_used=result.token_used,
                 )
             )
         elif not result.ok and result.error and not result.findings:
@@ -99,6 +114,7 @@ def _default_research(tasks: list[str]) -> Sequence[ResearchFinding]:
                     source_type="subagent",
                     query=result.task,
                     task_id=result.task,
+                    token_used=result.token_used,
                 )
             )
     return findings
@@ -112,7 +128,8 @@ def _default_write(state: ResearchState) -> str:
         lines.extend([f"## {question.question}", ""])
         matched = [
             finding for finding in findings
-            if finding.task_id == question.question
+            if finding.subquestion_id == question.id
+            or finding.task_id == question.question
             or finding.query == question.question
         ]
         if not matched:
@@ -124,7 +141,7 @@ def _default_write(state: ResearchState) -> str:
     return "\n".join(lines).strip()
 
 
-def _default_critic(
+def _deterministic_critic(
     state: ResearchState,
 ) -> tuple[str, list[dict[str, Any]]]:
     """默认的确定性 Critic：有待查查询就继续，否则停止。"""
@@ -133,18 +150,95 @@ def _default_critic(
     return "continue", []
 
 
+def _llm_critic(state: ResearchState) -> tuple[str, list[dict[str, Any]]]:
+    """让模型根据当前证据判断是否继续研究。失败时回退到确定性规则。"""
+    if state.budget_exhausted or not state.frontier:
+        return "stop", []
+
+    findings = "\n".join(
+        f"- [{finding.subquestion_id or 'unknown'}] {finding.content[:1200]}"
+        for finding in state.findings
+    )
+    payload = {
+        "topic": state.topic,
+        "subquestions": [question.__dict__ for question in state.subquestions],
+        "findings": findings,
+        "frontier": state.frontier,
+    }
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是研究流程 Critic。只根据输入判断证据是否足够。"
+                "只输出 JSON，不要 markdown："
+                '{"signal":"stop|continue|revise",'
+                '"next_queries":[{"subquestion_id":"q1","query":"..."}]}。'
+                "stop 表示证据足够；continue 表示继续处理现有 frontier；"
+                "revise 表示需要补充查询。补充查询必须具体且不可重复。"
+            ),
+        },
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
+    try:
+        response = call_llm(
+            get_client(),
+            os.getenv("LLM_MODEL", "deepseek-v4-flash"),
+            messages,
+            tools=[],
+            max_tokens=800,
+        )
+        text = final_text(response).strip()
+        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text).strip()
+        data = json.loads(text)
+        signal = str(data.get("signal", "stop"))
+        queries = data.get("next_queries", [])
+        if signal not in {"stop", "continue", "revise"} or not isinstance(queries, list):
+            raise ValueError("Critic 返回格式不正确")
+        return signal, queries
+    except Exception:
+        return _deterministic_critic(state)
+
+
 def _default_validate(state: ResearchState) -> Sequence[dict[str, Any]]:
-    """检查报告中的来源是否存在于 findings。"""
+    """检查子问题覆盖、来源存在性，以及报告内容是否来自 findings。"""
     sources = {finding.source for finding in state.findings}
     citations: list[dict[str, Any]] = []
+    for question in state.subquestions:
+        matched = [
+            finding for finding in state.findings
+            if finding.subquestion_id == question.id
+            or finding.task_id == question.question
+            or finding.query == question.question
+        ]
+        citations.append(
+            {
+                "type": "coverage",
+                "subquestion_id": question.id,
+                "source": question.question,
+                "exists": bool(matched),
+                "supported": bool(matched),
+                "note": "" if matched else "子问题没有对应研究发现",
+            }
+        )
     pattern = re.compile(r"来源：([^）\n]+)")
     for match in pattern.finditer(state.report):
         source = match.group(1).strip()
+        source_findings = [finding for finding in state.findings if finding.source == source]
+        report_text = state.report
+        supported = any(finding.content[:120] in report_text for finding in source_findings)
         citations.append(
             {
+                "type": "citation",
                 "source": source,
                 "exists": source in sources,
-                "note": "" if source in sources else "来源未出现在研究发现中",
+                "supported": supported,
+                "note": (
+                    ""
+                    if source in sources and supported
+                    else "来源未出现在研究发现中"
+                    if source not in sources
+                    else "报告论断未匹配到该来源材料"
+                ),
             }
         )
     return citations
@@ -184,7 +278,7 @@ class ResearchGraph:
         self.planner = planner or plan_research
         self.researcher = researcher or _default_research
         self.writer = writer or _default_write
-        self.critic = critic or _default_critic
+        self.critic = critic or _llm_critic
         self.validator = validator or _default_validate
         self.context_manager = context_manager or ContextManager()
         self.summarizer = summarizer
@@ -239,11 +333,10 @@ class ResearchGraph:
 
     def _research(self, state: ResearchState) -> dict[str, Any]:
         frontier = list(state.frontier)
-        tasks = [
-            str(item.get("query", "")).strip()
-            for item in frontier
-            if str(item.get("query", "")).strip()
+        task_items = [
+            item for item in frontier if str(item.get("query", "")).strip()
         ]
+        tasks = [str(item.get("query", "")).strip() for item in task_items]
         self._log(f"research：并行提交 {len(tasks)} 个子任务")
         research_result = self.researcher(tasks) if tasks else []
         if isinstance(research_result, str):
@@ -257,15 +350,35 @@ class ResearchGraph:
             ]
         else:
             findings = list(research_result)
+        subquestion_by_query = {
+            str(item.get("query", "")).strip(): str(item.get("subquestion_id", ""))
+            for item in task_items
+        }
+        findings = [
+            replace(
+                finding,
+                subquestion_id=(
+                    finding.subquestion_id
+                    or subquestion_by_query.get(finding.query, "")
+                ),
+            )
+            for finding in findings
+        ]
         return {
             "findings": list(state.findings) + findings,
             "frontier": [],
             "depth": state.depth + len(tasks),
+            "token_used": state.token_used + sum(
+                finding.token_used for finding in findings
+            ),
             "status": "researched",
         }
 
     def _critic(self, state: ResearchState) -> dict[str, Any]:
-        signal, next_queries = _normalize_critic_result(self.critic(state))
+        if state.budget_exhausted:
+            signal, next_queries = "stop", []
+        else:
+            signal, next_queries = _normalize_critic_result(self.critic(state))
         self._log(
             f"critic：{signal}，findings={len(state.findings)}，"
             f"next_queries={len(next_queries)}"
@@ -285,6 +398,7 @@ class ResearchGraph:
         signal = str(_state_value(state, "critic_signal") or "stop")
         if signal == "continue" and (
             _state_value(state, "depth") >= _state_value(state, "max_depth")
+            or _state_value(state, "token_used") >= _state_value(state, "max_tokens")
             or not _state_value(state, "frontier")
         ):
             return "stop"
@@ -344,6 +458,8 @@ class ResearchGraph:
         initial = ResearchState(
             topic=topic,
             user_instructions=user_instructions,
+            max_tokens=int(os.getenv("RESEARCH_MAX_TOKENS", "20000")),
+            max_depth=int(os.getenv("RESEARCH_MAX_DEPTH", "20")),
         )
         result = self.graph.invoke(initial)
         return ResearchState(**result)

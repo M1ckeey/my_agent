@@ -48,6 +48,9 @@ class SubagentResult:
     steps: int = 0
     error: str | None = None
     findings: list[ResearchFinding] = field(default_factory=list)
+    retry_count: int = 0
+    error_history: list[str] = field(default_factory=list)
+    token_used: int = 0
 
     @property
     def ok(self) -> bool:
@@ -75,6 +78,7 @@ def run_subagent(task: str, *, model: str, max_steps: int) -> SubagentResult:
             # on_text 不传 → 静默拼装。并行时多个子 agent 同时流式写终端会糊成一团。
             trigger_hooks("BeforeModel", sub_state)
             message = call_llm(client, model, messages, tools)
+            sub_state.token_used += message.total_tokens
         except Exception as exc:  # noqa: BLE001
             # 单个子 agent 的网络失败不能拖垮整批（对应 return_exceptions 语义）
             return SubagentResult(
@@ -98,7 +102,13 @@ def run_subagent(task: str, *, model: str, max_steps: int) -> SubagentResult:
             if continuation is not None:
                 messages.append({"role": "user", "content": str(continuation)})
                 continue
-            return SubagentResult(task=task, answer=answer, steps=turn, findings=sub_state.findings)
+            return SubagentResult(
+                task=task,
+                answer=answer,
+                steps=turn,
+                findings=sub_state.findings,
+                token_used=sub_state.token_used,
+            )
 
         messages.append(assistant_message(message))
         # 一轮里的多个 tool_call 逐个执行、逐个回填：每个 tool_call_id 都必须有
@@ -125,6 +135,7 @@ def run_subagent(task: str, *, model: str, max_steps: int) -> SubagentResult:
         steps=max_steps,
         error=f"达到最大步数 {max_steps}，子任务未完成",
         findings=sub_state.findings,
+        token_used=sub_state.token_used,
     )
 
 
@@ -134,6 +145,7 @@ def run_subagents(
     model: str | None = None,
     max_steps: int | None = None,
     max_workers: int | None = None,
+    max_retries: int | None = None,
 ) -> list[SubagentResult]:
     """并行跑一批子任务，返回的结果**顺序与 tasks 一致**。
 
@@ -143,6 +155,12 @@ def run_subagents(
     model = model or os.getenv("LLM_MODEL", "deepseek-v4-flash")
     max_steps = max_steps or int(os.getenv("SUBAGENT_MAX_STEPS", "5"))
     max_workers = max_workers or int(os.getenv("SUBAGENT_MAX_WORKERS", "4"))
+    max_retries = max(
+        0,
+        int(os.getenv("SUBAGENT_MAX_RETRIES", "1"))
+        if max_retries is None
+        else int(max_retries),
+    )
     # 起多少个线程就开多少个并发请求，别超过任务数
     workers = max(1, min(max_workers, len(tasks)))
 
@@ -156,13 +174,36 @@ def run_subagents(
             print(text, flush=True)
 
     if verbose:
-        report(f"\n[delegate] {len(tasks)} 个子任务并行调研（并发 {workers}，每个最多 {max_steps} 步）")
+        report(
+            f"\n[delegate] {len(tasks)} 个子任务并行调研"
+            f"（并发 {workers}，每个最多 {max_steps} 步，失败最多重试 {max_retries} 次）"
+        )
         for i, task in enumerate(tasks, 1):
             report(f"  · [{i}] 出发：{_limit(task, 60)}")
 
+    def run_with_retries(task: str) -> SubagentResult:
+        errors: list[str] = []
+        for attempt in range(max_retries + 1):
+            try:
+                result = run_subagent(task, model=model, max_steps=max_steps)
+            except Exception as exc:  # noqa: BLE001
+                result = SubagentResult(
+                    task=task,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+            if result.ok:
+                result.retry_count = attempt
+                result.error_history = errors
+                return result
+            if result.error:
+                errors.append(result.error)
+        result.retry_count = max_retries
+        result.error_history = errors
+        return result
+
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
-            pool.submit(run_subagent, task, model=model, max_steps=max_steps): i
+            pool.submit(run_with_retries, task): i
             for i, task in enumerate(tasks)
         }
         for future in as_completed(futures):
@@ -175,13 +216,18 @@ def run_subagents(
                 result = SubagentResult(task=tasks[index], error=f"{type(exc).__name__}: {exc}")
             results[index] = result
             if verbose:
-                state = f"{result.steps} 步" if result.ok else f"失败：{result.error}"
+                retry_note = f"，重试 {result.retry_count} 次" if result.retry_count else ""
+                state = f"{result.steps} 步{retry_note}" if result.ok else f"失败：{result.error}{retry_note}"
                 report(f"  · [{index + 1}] 完成 · {state}")
 
     finished = [r for r in results if r is not None]
     if verbose:
         ok = sum(1 for r in finished if r.ok)
-        report(f"[delegate] {ok}/{len(tasks)} 成功，共 {sum(r.steps for r in finished)} 步\n")
+        total_retries = sum(r.retry_count for r in finished)
+        report(
+            f"[delegate] {ok}/{len(tasks)} 成功，共 {sum(r.steps for r in finished)} 步，"
+            f"重试 {total_retries} 次\n"
+        )
 
     return finished
 
@@ -202,7 +248,11 @@ def format_digest(results: list[SubagentResult]) -> str:
     lines: list[str] = []
     total = len(results)
     for i, r in enumerate(results, 1):
-        lines.append(f"子任务 {i}/{total} · {'完成' if r.ok else '失败'} · {r.steps} 步")
+        retry_note = f" · 重试 {r.retry_count} 次" if r.retry_count else ""
+        lines.append(
+            f"子任务 {i}/{total} · {'完成' if r.ok else '失败'}"
+            f" · {r.steps} 步{retry_note}"
+        )
         lines.append(f"任务：{r.task}")
         if r.ok:
             answer = r.answer
@@ -210,7 +260,8 @@ def format_digest(results: list[SubagentResult]) -> str:
                 answer = answer[:_ANSWER_LIMIT] + "…（结论过长，已截断）"
             lines.append(f"结论：{answer}")
         else:
-            lines.append(f"结论：（无）失败原因：{r.error}")
+            history = "；".join(r.error_history) if r.error_history else (r.error or "未知错误")
+            lines.append(f"结论：（无）失败原因：{history}")
         lines.append("")
 
     failed = [i for i, r in enumerate(results, 1) if not r.ok]
