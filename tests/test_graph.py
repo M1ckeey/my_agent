@@ -6,6 +6,42 @@ from agent.state import ResearchFinding
 
 
 class ResearchGraphTests(unittest.TestCase):
+    def test_revise_runs_new_query_before_writing(self):
+        batches = []
+        critic_calls = []
+
+        def researcher(tasks):
+            batches.append(tasks)
+            return [
+                ResearchFinding(
+                    content=f"evidence for {task}",
+                    source="test",
+                    source_type="test",
+                    query=task,
+                )
+                for task in tasks
+            ]
+
+        def critic(state):
+            critic_calls.append(list(state.frontier))
+            if len(critic_calls) == 1:
+                return "revise", [{"subquestion_id": "q1", "query": "follow-up"}]
+            return "stop"
+
+        graph = ResearchGraph(
+            planner=lambda _: [ResearchSubQuestion(id="q1", question="initial")],
+            researcher=researcher,
+            critic=critic,
+            verbose=False,
+        )
+
+        result = graph.run("topic")
+
+        self.assertEqual(batches, [["initial"], ["follow-up"]])
+        self.assertEqual(critic_calls, [[], []])
+        self.assertEqual(result.depth, 2)
+        self.assertEqual(result.status, "done")
+
     def test_research_restores_subquestion_id_from_frontier(self):
         graph = ResearchGraph(
             researcher=lambda tasks: [
@@ -43,6 +79,7 @@ class ResearchGraphTests(unittest.TestCase):
             planner=planner,
             researcher=researcher,
             writer=lambda state: state.findings[0].subquestion_id,
+            critic=lambda state: "stop",
             verbose=False,
         )
 

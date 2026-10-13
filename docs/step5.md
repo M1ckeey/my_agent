@@ -5,12 +5,11 @@ Step 5 引入了研究流程图。本文按当前代码说明图的组织方式�
 ## 流程
 
 ```text
-START → plan → research → critic ─┬─ continue → research
-                                  ├─ revise → revise → research
+START → plan → research → critic ─┬─ revise → revise → research
                                   └─ stop → write → validate → END
 ```
 
-`plan` 把主题拆成子问题，`research` 批量处理 `frontier` 中的查询，`critic` 判断是否补查或结束，`write` 整理 findings，`validate` 检查子问题覆盖和报告引用。`research` 使用线程池并行运行子 Agent；子 Agent 各有独立的消息上下文。
+`plan` 把主题拆成子问题，`research` 批量处理 `frontier` 中的查询，`critic` 根据已有 findings 判断是否补查或结束，`write` 整理 findings，`validate` 检查子问题覆盖和报告引用。`research` 使用线程池并行运行子 Agent；子 Agent 各有独立的消息上下文。
 
 ## 文件组织
 
@@ -26,7 +25,7 @@ START → plan → research → critic ─┬─ continue → research
 
 ## 图节点与连线
 
-`lg_builder.py` 中的 `plan`、`research`、`critic`、`revise`、`write`、`validate` 是模块级函数。节点读取 `ResearchState`，返回需要更新的状态字段。`route_critic` 读取 Critic 信号，并在继续研究前检查步数、token 预算和待处理查询。
+`lg_builder.py` 中的 `plan`、`research`、`critic`、`revise`、`write`、`validate` 是模块级函数。节点读取 `ResearchState`，返回需要更新的状态字段。`route_critic` 读取 `revise` 或 `stop` 信号；只有补充查询非空且预算允许时，才进入 `revise`。
 
 文件末尾集中定义 `builder = StateGraph(ResearchState)`，随后调用 `add_node()`、`add_edge()`、`add_conditional_edges()`，最后执行 `graph = builder.compile()`。阅读这一段即可看到完整流程拓扑。
 
@@ -48,7 +47,7 @@ state = runner.run("研究主题")
 
 外层 `ResearchState` 保存主题、子问题、`frontier`、findings、研究深度、token 用量、报告和校验结果。它不保存子 Agent 的完整消息历史。`research` 处理当前批次的全部查询，并把 findings 关联到子问题；`write` 在生成报告前压缩 findings，同时保留 `raw_findings`。
 
-预算由 `RESEARCH_MAX_DEPTH` 和 `RESEARCH_MAX_TOKENS` 配置。Critic 达到预算时停止继续研究。token 统计依赖模型服务返回的 usage；服务端不返回时无法精确计数。
+预算由 `RESEARCH_MAX_DEPTH` 和 `RESEARCH_MAX_TOKENS` 配置。Critic 达到预算时停止补查。token 统计依赖模型服务返回的 usage；服务端不返回时无法精确计数。
 
 ## 为什么节点是同步函数
 

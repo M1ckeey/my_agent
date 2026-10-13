@@ -82,7 +82,6 @@ plan
 research
   ↓
 critic
-  ├─ continue → research
   ├─ revise   → revise → research
   └─ stop     → write
                          ↓
@@ -97,8 +96,8 @@ critic
 | --- | --- |
 | `plan` | 将研究主题拆成子问题和查询 |
 | `research` | 收集网页、论文、文件或其他来源 |
-| `critic` | 判断证据是否足够、是否需要继续 |
-| `revise` | 修改查询或重新规划 |
+| `critic` | 判断已有证据是否足够，并选择补查或写作 |
+| `revise` | 把 Critic 提出的补充查询加入待查队列 |
 | `write` | 根据研究发现生成报告 |
 | `validate` | 检查引用、来源和关键论断 |
 

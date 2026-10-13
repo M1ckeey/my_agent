@@ -4,7 +4,7 @@
     python main_graph.py                                  # 交互模式
 
 外层流程：
-    plan → research → critic → revise/research → write → validate
+    plan → research → critic → revise → research（补查）或 write → validate
 """
 
 from __future__ import annotations

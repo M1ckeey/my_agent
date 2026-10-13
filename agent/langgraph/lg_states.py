@@ -84,9 +84,9 @@ class ResearchState:
         next_queries: list[dict[str, Any]] | None = None,
     ) -> None:
         """保存 Critic 路由结果，并把补充查询放回 frontier。"""
-        if signal not in {"continue", "revise", "stop"}:
+        if signal not in {"revise", "stop"}:
             raise ValueError(
-                "critic signal 必须是 continue、revise 或 stop"
+                "critic signal 必须是 revise 或 stop"
             )
         self.critic_signal = signal
         self.next_queries = list(next_queries or [])

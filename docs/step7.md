@@ -57,14 +57,14 @@ LLM 流式响应中的 `usage.total_tokens` 会被记录；服务端不返回 us
 
 ```json
 {
-  "signal": "stop | continue | revise",
+  "signal": "stop | revise",
   "next_queries": [
     {"subquestion_id": "q1", "query": "补充查询"}
   ]
 }
 ```
 
-预算检查在调用 Critic 前执行。模型调用失败或输出格式错误时，回退到确定性规则。
+预算检查在调用 Critic 前执行。模型调用失败或输出格式错误时回退到 `stop`；证据不足时，Critic 即使面对空的 frontier 也能提出补充查询。
 
 ### 5. Validator
 

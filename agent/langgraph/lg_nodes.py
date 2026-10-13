@@ -103,15 +103,13 @@ def _default_write(state: ResearchState) -> str:
 def _deterministic_critic(
     state: ResearchState,
 ) -> tuple[str, list[dict[str, Any]]]:
-    """默认的确定性 Critic：有待查查询就继续，否则停止。"""
-    if state.budget_exhausted or not state.frontier:
-        return "stop", []
-    return "continue", []
+    """模型判断失败时结束补查，保留当前研究材料。"""
+    return "stop", []
 
 
 def _llm_critic(state: ResearchState) -> tuple[str, list[dict[str, Any]]]:
     """让模型根据当前证据判断是否继续研究。失败时回退到确定性规则。"""
-    if state.budget_exhausted or not state.frontier:
+    if state.budget_exhausted:
         return "stop", []
 
     findings = "\n".join(
@@ -144,9 +142,17 @@ def _llm_critic(state: ResearchState) -> tuple[str, list[dict[str, Any]]]:
         data = json.loads(text)
         signal = str(data.get("signal", "stop"))
         queries = data.get("next_queries", [])
-        if signal not in {"stop", "continue", "revise"} or not isinstance(queries, list):
+        if signal not in {"stop", "revise"} or not isinstance(queries, list):
             raise ValueError("Critic 返回格式不正确")
-        return signal, queries
+        if signal == "revise":
+            queries = [
+                item for item in queries
+                if isinstance(item, dict) and str(item.get("query", "")).strip()
+            ]
+            if not queries:
+                raise ValueError("Critic 选择 revise 时必须提供补充查询")
+            return signal, queries
+        return "stop", []
     except Exception:
         return _deterministic_critic(state)
 

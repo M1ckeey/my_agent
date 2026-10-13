@@ -10,12 +10,12 @@ class BudgetTests(unittest.TestCase):
 
         self.assertTrue(state.budget_exhausted)
 
-    def test_critic_continue_is_stopped_when_token_budget_is_exhausted(self):
+    def test_critic_revise_is_stopped_when_token_budget_is_exhausted(self):
         graph = ResearchGraph(verbose=False)
         state = ResearchState(
             topic="topic",
-            critic_signal="continue",
-            frontier=[{"query": "next"}],
+            critic_signal="revise",
+            next_queries=[{"subquestion_id": "q1", "query": "next"}],
             token_used=100,
             max_tokens=100,
         )

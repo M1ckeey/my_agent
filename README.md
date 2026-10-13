@@ -108,7 +108,7 @@ compact
 目标是在手写 ReAct 外层增加完整的研究流程图：
 
 ```text
-plan → research → critic → revise/research → write → validate
+plan → research → critic → revise → research（补查）或 write → validate
 ```
 
 这一阶段实现了：

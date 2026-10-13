@@ -124,7 +124,7 @@ def research(state: ResearchState, *, config: RunnableConfig) -> dict[str, Any]:
 
 
 def critic(state: ResearchState, *, config: RunnableConfig) -> dict[str, Any]:
-    """Choose whether to stop, continue, or add queries."""
+    """Choose whether to add queries or write the report."""
     services = _services(config)
     if state.budget_exhausted:
         signal, next_queries = "stop", []
@@ -135,9 +135,9 @@ def critic(state: ResearchState, *, config: RunnableConfig) -> dict[str, Any]:
         f"critic：{signal}，findings={len(state.findings)}，"
         f"next_queries={len(next_queries)}",
     )
-    if signal not in {"continue", "revise", "stop"}:
+    if signal not in {"revise", "stop"}:
         raise ValueError(
-            f"Critic 返回了未知信号 {signal!r}，必须是 continue、revise 或 stop"
+            f"Critic 返回了未知信号 {signal!r}，必须是 revise 或 stop"
         )
     return {
         "critic_signal": signal,
@@ -147,12 +147,15 @@ def critic(state: ResearchState, *, config: RunnableConfig) -> dict[str, Any]:
 
 
 def route_critic(state: ResearchState | dict[str, Any]) -> str:
-    """Apply the hard budget gate before following the Critic decision."""
+    """Only revisit research when a valid new query fits the budget."""
     signal = str(_state_value(state, "critic_signal") or "stop")
-    if signal == "continue" and (
+    if signal == "revise" and (
         _state_value(state, "depth") >= _state_value(state, "max_depth")
         or _state_value(state, "token_used") >= _state_value(state, "max_tokens")
-        or not _state_value(state, "frontier")
+        or not any(
+            isinstance(item, dict) and str(item.get("query", "")).strip()
+            for item in (_state_value(state, "next_queries") or [])
+        )
     ):
         return "stop"
     return signal
@@ -229,7 +232,7 @@ builder.add_edge("research", "critic")
 builder.add_conditional_edges(
     "critic",
     route_critic,
-    {"continue": "research", "revise": "revise", "stop": "write"},
+    {"revise": "revise", "stop": "write"},
 )
 builder.add_edge("revise", "research")
 builder.add_edge("write", "validate")

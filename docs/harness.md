@@ -61,7 +61,6 @@ status
 ### 路由
 
 - `stop` 进入 `write`。
-- `continue` 回到 `research`。
 - `revise` 经过 `revise` 后回到 `research`。
 - 达到 `max_depth` 或预算上限时必须停止。
 
