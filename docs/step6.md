@@ -72,8 +72,8 @@ compact_history
 
 ## 边界
 
-Step 6 只负责单次运行中的会话上下文。跨会话记忆、LangGraph checkpoint、统一 token 预算和长期知识库属于后续阶段。
+Step 6 只负责单次运行中的会话上下文。统一 token 预算已在 Step 7 加入；跨会话记忆、LangGraph checkpoint 和长期知识库仍属于后续阶段。
 
 ## Step 6 收尾
 
-Step 6 已完成会话级压缩、主动压缩、超限补救、LLM 摘要回退、可恢复文件保存和基础指标记录。下一阶段进入 Step 7，处理统一 token 预算与 checkpoint 恢复。
+Step 6 完成了会话级压缩、主动压缩、超限补救、LLM 摘要回退、文件转存和基础指标记录。后续的 Step 7 增加了统一预算；checkpoint 与中断恢复尚未实现。

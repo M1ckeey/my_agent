@@ -1,6 +1,6 @@
 ﻿# Research Agent 分层架构
 
-本文记录项目后续采用的分层设计：
+本文记录项目当前的分层设计：
 
 - **外层**使用 LangGraph 编排完整研究流程
 - **内层**由各个 Agent 使用 ReAct 循环完成具体任务
@@ -72,7 +72,7 @@ LangGraph 不等于 ReAct，但可以用来编排 ReAct 循环，也可以编排
 
 ## 3. 外层流程
 
-外层 LangGraph 可以定义为：
+外层 LangGraph 当前定义为：
 
 ```text
 START
@@ -83,7 +83,7 @@ research
   ↓
 critic
   ├─ continue → research
-  ├─ revise   → plan 或 research
+  ├─ revise   → revise → research
   └─ stop     → write
                          ↓
                       validate
@@ -130,19 +130,23 @@ critic
 
 ## 5. 与当前代码的对应关系
 
-| 当前代码 | 后续图结构 |
+| 代码 | 职责 |
 | --- | --- |
 | `agent/loop.py` | 内层手写 ReAct 执行引擎 |
-| `agent/state.py` | 外层和内层的状态定义 |
-| `tools.run_tool()` | Tool 节点 |
-| `plan_research` | Planner 节点 |
-| `delegate` | Researcher 批量节点 |
+| `agent/state.py` | 内层状态和 `ResearchFinding` |
+| `agent/langgraph/lg_states.py` | 外层研究状态 |
+| `agent/langgraph/lg_prompts.py` | 外层 Critic 提示词 |
+| `agent/langgraph/lg_nodes.py` | 默认研究、写作、校验等实现 |
+| `agent/langgraph/lg_builder.py` | 模块级节点、路由和图连线 |
+| `agent/langgraph/main.py` | 外层研究命令行与报告保存 |
+| `tools.run_tool()` | 内层工具执行入口 |
+| `plan_research` | 默认 Planner 实现 |
+| `run_subagents()` | 外层 Researcher 默认批量实现 |
 | `agent/subagent.py` | 子 Agent 手写 ReAct 循环 |
-| `messages` | 当前 Agent 的消息上下文 |
-| `steps` | 执行轨迹和调试信息 |
 
-`delegate` 继续作为普通工具，由工具内部的线程池并行运行子 Agent。内层
-ReAct 保留手写实现，外层 LangGraph 只负责研究流程的状态和路由。
+`lg_builder.py` 文件末尾集中调用 `StateGraph.add_node()`、`add_edge()` 和 `add_conditional_edges()`。节点是模块级函数，通过 `RunnableConfig.configurable.research_services` 获取本次运行的可替换实现。`ResearchGraph` 提供运行和依赖注入接口；`main_graph.py`、`agent/graph.py` 和 `agent/research_state.py` 保留旧入口。
+
+当前模型客户端和工具调用都是同步接口，外层使用 `graph.invoke()`，子 Agent 用线程池并行。因此节点使用普通 `def`；改用 `async def` 需要同时改造底层 I/O 和运行入口。
 
 ## 6. 推荐的状态划分
 
@@ -203,16 +207,15 @@ class AgentState:
 
 外层应优先保存结构化的 `ResearchFinding`，而不是长期保存完整的原始 `messages`。
 
-## 8. 迁移顺序
+## 8. 实施进度
 
-建议按以下顺序实现：
+已实现：
 
-1. 为工具结果增加结构化的 finding 表示
-2. 保留当前手写 ReAct，先接入外层研究流程
-3. 增加 `plan → research → critic → write` 外层图
-4. 加入 findings 去重和上下文压缩
-5. 增加 `validate`、预算控制和条件边
-6. 最后再增加 checkpoint、RAG 和长期记忆
+- 结构化 findings、去重和上下文压缩。
+- 手写 ReAct 内层和 LangGraph 外层研究图。
+- Critic 条件路由、Validator 和研究预算。
+
+后续计划包括 checkpoint 与中断恢复、RAG 和长期记忆。
 
 ## 9. 设计原则
 

@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from agent.graph import _llm_critic
+from agent.langgraph.lg_nodes import _llm_critic
 from agent.llm import Message
 from agent.research_state import ResearchState
 
@@ -17,7 +17,7 @@ class CriticTests(unittest.TestCase):
             tool_calls=None,
         )
 
-        with patch("agent.graph.call_llm", return_value=response):
+        with patch("agent.langgraph.lg_nodes.call_llm", return_value=response):
             signal, queries = _llm_critic(state)
 
         self.assertEqual(signal, "revise")

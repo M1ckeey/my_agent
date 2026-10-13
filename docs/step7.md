@@ -77,8 +77,10 @@ Validator 现在检查两类问题：
 
 ## 相关代码和测试
 
-- `agent/graph.py`：外层研究、Critic、Writer 和 Validator。
-- `agent/research_state.py`：研究状态与预算。
+- `agent/langgraph/lg_builder.py`：外层流程图、节点连线与运行入口。
+- `agent/langgraph/lg_nodes.py`：研究、Critic、Writer 和 Validator 的默认逻辑。
+- `agent/langgraph/lg_states.py`：研究状态与预算。
+- `agent/langgraph/lg_prompts.py`：Critic 提示词。
 - `agent/subagent.py`：并行子 Agent、重试和 token 汇总。
 - `agent/llm.py`：流式响应 token 统计。
 - `tests/test_graph.py`：子问题归属。

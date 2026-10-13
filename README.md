@@ -213,6 +213,8 @@ SUBAGENT_MAX_WORKERS=4
 
 其中 `RESEARCH_MAX_DEPTH` 和 `RESEARCH_MAX_TOKENS` 是外层研究预算；任一预算耗尽后，流程会停止继续研究。`SUBAGENT_MAX_RETRIES` 控制单个子 Agent 的失败重试次数。
 
+外层图定义在 `agent/langgraph/lg_builder.py`：模块级函数对应各图节点，文件末尾集中注册节点、条件边并编译图。`ResearchGraph` 负责运行图，并通过 `RunnableConfig` 向节点提供可替换的 Planner、Researcher 等实现。当前模型和工具调用为同步接口，因此节点使用普通 `def` 和 `graph.invoke()`。详见 [docs/step5.md](docs/step5.md)。
+
 运行自动化测试：
 
 ```bash
@@ -231,8 +233,14 @@ python -m unittest discover -v
 │   ├── loop.py                主 Agent 循环
 │   ├── llm.py                 LLM 调用、流式响应和重试
 │   ├── state.py               对话消息与执行轨迹
-│   ├── research_state.py      外层 LangGraph 状态
-│   ├── graph.py               外层研究流程图和 Validator
+│   ├── langgraph/             外层 LangGraph 实现
+│   │   ├── lg_states.py       研究状态
+│   │   ├── lg_prompts.py      Critic 提示词
+│   │   ├── lg_nodes.py        节点使用的默认实现与辅助函数
+│   │   ├── lg_builder.py      模块级图节点、条件路由与连线
+│   │   └── main.py            研究流程命令行入口
+│   ├── research_state.py      旧状态导入路径兼容层
+│   ├── graph.py               旧图导入路径兼容层
 │   ├── compactor.py           五步会话级上下文压缩
 │   ├── context.py             ResearchFinding 去重和材料压缩
 │   ├── hooks.py               Agent 生命周期 Hook
