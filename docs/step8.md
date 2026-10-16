@@ -68,6 +68,6 @@ Remove-Item Env:TEST_POSTGRES_URL
 
 跨连接恢复测试已在本机 PostgreSQL 上通过；它验证关闭并重新打开数据库连接后恢复同一线程。2026-10-16 的测试在本机 `research` 数据库留下了测试线程数据。尚未测试独立进程被强制终止后的恢复，也未运行真实模型研究任务做端到端质量验证。状态版本目前为 1；遇到其他版本会明确报错，后续修改状态结构时需要同步实现迁移。PostgreSQL checkpoint 保存的是外层研究状态，不能恢复一个正在执行的内层 ReAct 调用到中间的 token 或工具步骤。
 
-下一步先增加独立进程中断与恢复的集成测试，确认已提交查询不会重跑、正在执行的查询允许重试、最终报告只保存一次。之后记录节点耗时和 token、重试次数、引用覆盖及报告路径，再用固定主题评估报告质量。
+下一步先增加独立进程中断与恢复的集成测试，确认已提交查询不会重跑、正在执行的查询允许重试、最终报告只保存一次。之后记录节点耗时和 token、重试次数、引用覆盖及报告路径，再按 [评测计划](../eval/README.md) 用固定主题评估报告质量。
 
 接口参考：[LangGraph persistence](https://docs.langchain.com/oss/python/langgraph/persistence)、[PostgresSaver README](https://github.com/langchain-ai/langgraph/tree/main/libs/checkpoint-postgres)。

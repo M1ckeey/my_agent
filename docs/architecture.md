@@ -215,7 +215,7 @@ class AgentState:
 - Critic 条件路由、Validator 和研究预算。
 - 外层图按查询保存 checkpoint；`ResearchGraph` 注入内存或 PostgreSQL saver，支持按 `thread_id` 查看和恢复。
 
-PostgreSQL 跨连接恢复已验证；独立进程退出后的恢复边界、运行轨迹和固定主题评测仍待验证或实现。之后再扩展 RAG 和长期记忆。
+PostgreSQL 跨连接恢复已验证；独立进程退出后的恢复边界和运行轨迹仍待验证或实现。固定主题评测已有 [流程计划](../eval/README.md)，题集、脚本和基线结果尚未实现。之后再扩展 RAG 和长期记忆。
 
 ## 9. 设计原则
 

@@ -162,6 +162,10 @@ plan → research → critic → revise → research（补查）或 write → va
 
 项目的 `langgraph` Conda 环境已验证这套实现，包括本机 PostgreSQL 的跨连接恢复。运行测试前可执行 `conda activate langgraph`；再次运行数据库集成测试需设置 `TEST_POSTGRES_URL`，详见 [Step 8 测试说明](docs/step8.md#测试)。
 
+### 评测计划
+
+[eval/README.md](eval/README.md) 规划了固定题集、逐题保存原始产物、离线评分与人工复核、建立可比较基线的流程。第一版计划区分流程完成、子问题材料覆盖、来源可追溯和人工核对的论断支持。`eval/` 目前只有计划文档；题集、评测脚本和基线结果尚未实现。
+
 ## 快速开始
 
 安装依赖：
@@ -272,6 +276,8 @@ python -m unittest discover -v
 │   ├── read_file.py           文件读取
 │   ├── plan.py                研究计划工具
 │   └── delegate.py            子 Agent 调度工具
+├── eval/
+│   └── README.md              固定题集与报告质量评测计划
 ├── tests/
 │   ├── test_context.py        研究材料压缩测试
 │   ├── test_compactor.py      会话压缩测试
@@ -304,6 +310,6 @@ python -m unittest discover -v
 - Critic 的语义判断失败时会回退到确定性规则
 - 子 Agent 当前只会重试同一任务，不会根据失败原因自动改写查询
 - Validator 主要做材料覆盖和文本匹配，尚未判断事实、数字和来源之间的深层语义关系
-- 尚未接入完整运行轨迹和固定主题质量评测
+- 尚未接入完整运行轨迹和固定主题质量评测；评测流程计划见 [eval/README.md](eval/README.md)
 - 尚未接入 RAG 知识库和跨会话长期记忆
 
