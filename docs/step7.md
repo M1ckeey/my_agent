@@ -95,4 +95,4 @@ Validator 现在检查两类问题：
 
 ## 边界
 
-Step 7 完成了单次运行内的质量控制和预算控制。LangGraph checkpoint、运行轨迹持久化、固定主题评测、RAG 和长期记忆属于后续阶段。
+Step 7 完成了单次运行内的质量控制和预算控制。LangGraph checkpoint 已在 [Step 8](step8.md) 加入；运行轨迹持久化、固定主题评测、RAG 和长期记忆仍待实现。

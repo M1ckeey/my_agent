@@ -132,9 +132,6 @@ fast LLM 摘要
 
 压缩结果在写报告前使用，不会修改内层 Agent 的 `messages`。后续如果要压缩 `messages`，还必须保留完整的 `assistant(tool_calls)` 与对应的 `tool` 消息关系。
 
-## 七、下一步
+## 七、后续步骤
 
-1. 从网页搜索和 arXiv 结果中提取真实 URL、论文 ID 等来源信息。
-2. 将 findings 按子问题归类，并完善报告引用校验。
-3. 为 Critic 接入 LLM 判断和预算硬闸。
-4. 为 LangGraph 增加 checkpoint 与中断恢复。
+本文写于 Step 4。后续已按子问题归类 findings，并在 [Step 7](step7.md) 加入 Critic、预算和引用校验；[Step 8](step8.md) 加入 LangGraph checkpoint 与中断恢复。来源元数据和报告质量仍需通过真实研究任务持续验证。

@@ -145,7 +145,7 @@ critic
 
 `lg_builder.py` 文件末尾集中调用 `StateGraph.add_node()`、`add_edge()` 和 `add_conditional_edges()`。节点是模块级函数，通过 `RunnableConfig.configurable.research_services` 获取本次运行的可替换实现。`ResearchGraph` 提供运行和依赖注入接口；`main_graph.py`、`agent/graph.py` 和 `agent/research_state.py` 保留旧入口。
 
-当前模型客户端和工具调用都是同步接口，外层使用 `graph.invoke()`，子 Agent 用线程池并行。因此节点使用普通 `def`；改用 `async def` 需要同时改造底层 I/O 和运行入口。
+当前模型客户端和工具调用都是同步接口，外层使用 `graph.invoke()`，手写 Agent 的 `delegate` 用线程池并行。启用 checkpoint 后，外层 research 按查询逐个完成并保存进度。因此节点使用普通 `def`；改用 `async def` 需要同时改造底层 I/O 和运行入口。
 
 ## 6. 推荐的状态划分
 
@@ -213,8 +213,9 @@ class AgentState:
 - 结构化 findings、去重和上下文压缩。
 - 手写 ReAct 内层和 LangGraph 外层研究图。
 - Critic 条件路由、Validator 和研究预算。
+- 外层图按查询保存 checkpoint；`ResearchGraph` 注入内存或 PostgreSQL saver，支持按 `thread_id` 查看和恢复。
 
-后续计划包括 checkpoint 与中断恢复、RAG 和长期记忆。
+PostgreSQL 跨连接恢复已验证；独立进程退出后的恢复边界、运行轨迹和固定主题评测仍待验证或实现。之后再扩展 RAG 和长期记忆。
 
 ## 9. 设计原则
 

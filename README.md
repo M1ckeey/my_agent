@@ -116,7 +116,7 @@ plan → research → critic → revise → research（补查）或 write → va
 - 独立的 `ResearchState`
 - LangGraph 外层研究流程
 - Critic 条件边和补充查询
-- frontier 批量提交和线程池并行执行
+- 当时的 frontier 批量提交和线程池并行执行（Step 8 调整为逐查询 checkpoint）
 - `plan`、`research`、`critic`、`write`、`validate` 节点日志
 - 写作前 findings 压缩
 - 报告来源校验
@@ -155,6 +155,12 @@ plan → research → critic → revise → research（补查）或 write → va
 - Writer 按子问题归类研究材料
 
 详见 [docs/step7.md](docs/step7.md)。
+
+### Step 8：PostgreSQL checkpoint 与中断恢复
+
+外层研究图支持按 `thread_id` 保存和恢复状态。开发和测试默认使用内存 checkpoint；跨进程恢复使用 PostgreSQL。每完成一个研究查询就保存进度，同一线程可连续提问并保留最近的研究摘要。详见 [docs/step8.md](docs/step8.md)。
+
+项目的 `langgraph` Conda 环境已验证这套实现，包括本机 PostgreSQL 的跨连接恢复。运行测试前可执行 `conda activate langgraph`；再次运行数据库集成测试需设置 `TEST_POSTGRES_URL`，详见 [Step 8 测试说明](docs/step8.md#测试)。
 
 ## 快速开始
 
@@ -196,7 +202,7 @@ python main_graph.py
 每次通过 `main_graph.py` 完成的研究，会自动保存为 Markdown 文件，位置为：
 
 ```text
-reports/YYYYMMDD_HHMMSS_主题.md
+reports/YYYYMMDD_HHMMSS_主题_运行ID前8位.md
 ```
 
 `TAVILY_API_KEY` 只在使用网页搜索时需要。通过修改 `LLM_BASE_URL`，也可以接入其他 OpenAI 兼容模型服务。
@@ -206,6 +212,8 @@ reports/YYYYMMDD_HHMMSS_主题.md
 ```env
 RESEARCH_MAX_DEPTH=20
 RESEARCH_MAX_TOKENS=20000
+RESEARCH_CHECKPOINT_BACKEND=postgres
+RESEARCH_DATABASE_URL=postgresql://user:password@localhost:5432/research
 SUBAGENT_MAX_RETRIES=1
 SUBAGENT_MAX_STEPS=5
 SUBAGENT_MAX_WORKERS=4
@@ -213,7 +221,16 @@ SUBAGENT_MAX_WORKERS=4
 
 其中 `RESEARCH_MAX_DEPTH` 和 `RESEARCH_MAX_TOKENS` 是外层研究预算；任一预算耗尽后，流程会停止继续研究。`SUBAGENT_MAX_RETRIES` 控制单个子 Agent 的失败重试次数。
 
-外层图定义在 `agent/langgraph/lg_builder.py`：模块级函数对应各图节点，文件末尾集中注册节点、条件边并编译图。`ResearchGraph` 负责运行图，并通过 `RunnableConfig` 向节点提供可替换的 Planner、Researcher 等实现。当前模型和工具调用为同步接口，因此节点使用普通 `def` 和 `graph.invoke()`。详见 [docs/step5.md](docs/step5.md)。
+PostgreSQL 模式会在启动时初始化 checkpoint 表。查看或恢复已有线程：
+
+```bash
+python main_graph.py --status --thread-id 你的线程ID
+python main_graph.py --resume --thread-id 你的线程ID
+```
+
+可用 `--pause-after plan` 在规划完成后暂停，随后用 `--resume` 继续。跨进程恢复需要配置 PostgreSQL；默认内存模式只保留当前进程的状态。
+
+外层图定义在 `agent/langgraph/lg_builder.py`：模块级函数对应各图节点，文件末尾集中注册节点和条件边。`ResearchGraph` 用注入的 checkpointer 编译运行图，并通过 `RunnableConfig` 向节点提供可替换的 Planner、Researcher 等实现。当前模型和工具调用为同步接口，因此节点使用普通 `def` 和 `graph.invoke()`。详见 [docs/step5.md](docs/step5.md) 和 [docs/step8.md](docs/step8.md)。
 
 运行自动化测试：
 
@@ -234,6 +251,7 @@ python -m unittest discover -v
 │   ├── llm.py                 LLM 调用、流式响应和重试
 │   ├── state.py               对话消息与执行轨迹
 │   ├── langgraph/             外层 LangGraph 实现
+│   │   ├── checkpoint.py      内存与 PostgreSQL checkpoint
 │   │   ├── lg_states.py       研究状态
 │   │   ├── lg_prompts.py      Critic 提示词
 │   │   ├── lg_nodes.py        节点使用的默认实现与辅助函数
@@ -258,6 +276,7 @@ python -m unittest discover -v
 │   ├── test_context.py        研究材料压缩测试
 │   ├── test_compactor.py      会话压缩测试
 │   ├── test_graph.py          外层图和子问题归属测试
+│   ├── test_checkpoint.py     checkpoint 与恢复测试
 │   ├── test_subagent_retry.py 子 Agent 重试测试
 │   ├── test_budget.py         预算硬闸测试
 │   ├── test_critic.py         Critic 路由测试
@@ -271,7 +290,8 @@ python -m unittest discover -v
 │   ├── step4.md               Hook 扩展与上下文管理
 │   ├── step5.md               外层 LangGraph 编排
 │   ├── step6.md               会话级上下文压缩
-│   └── step7.md               研究流程质量与预算控制
+│   ├── step7.md               研究流程质量与预算控制
+│   └── step8.md               PostgreSQL checkpoint 与中断恢复
 ├── reports/                   自动生成的研究报告
 ├── .task_outputs/             转存的大型工具结果
 └── .transcripts/              压缩前的会话记录
@@ -279,11 +299,11 @@ python -m unittest discover -v
 
 ## 当前限制
 
-- 对话状态只在单次运行中保存，尚未接入 checkpoint 和中断恢复
+- PostgreSQL 跨进程恢复需要可用数据库；目前只验证了跨连接恢复，尚未做独立进程强制终止测试。单个正在执行的 research 查询中断后可能重试
 - token 使用量依赖模型服务返回 `usage.total_tokens`；服务端不返回时无法精确统计
 - Critic 的语义判断失败时会回退到确定性规则
 - 子 Agent 当前只会重试同一任务，不会根据失败原因自动改写查询
 - Validator 主要做材料覆盖和文本匹配，尚未判断事实、数字和来源之间的深层语义关系
-- 尚未接入 LangGraph checkpoint、完整运行轨迹和固定主题质量评测
+- 尚未接入完整运行轨迹和固定主题质量评测
 - 尚未接入 RAG 知识库和跨会话长期记忆
 

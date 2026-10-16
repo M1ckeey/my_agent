@@ -6,7 +6,7 @@ Harness 是围绕 Agent 的测试、运行和观察层。它不替代内层 ReAc
 
 - 输入是否正确进入 Planner。
 - 子问题是否被放入 `frontier`。
-- frontier 中的任务是否批量并行执行。
+- frontier 中的任务是否逐项保存进度，恢复时是否跳过已完成查询。
 - 子 Agent 的成功、失败和重试是否被记录。
 - findings 是否保留来源、查询和子问题归属。
 - Critic 的路由是否符合预算。
@@ -19,10 +19,13 @@ Harness 是围绕 Agent 的测试、运行和观察层。它不替代内层 ReAc
 
 ```text
 run_id
+thread_id
 topic
 plan
 frontier_before
-research_batch
+research_query
+completed_queries
+checkpoint_id
 subagent_results
 critic_signal
 findings_count
@@ -45,10 +48,11 @@ status
 
 ## 三、最小验收标准
 
-### 并行执行
+### 研究进度与并行执行
 
 - Planner 生成多个子问题。
-- `research` 一次把多个查询传给 `run_subagents()`。
+- 外层 `research` 每次执行一个查询并保存 checkpoint。
+- 手写 Agent 的 `delegate` 可以把多个子任务交给 `run_subagents()`。
 - 并发数不超过 `SUBAGENT_MAX_WORKERS`。
 - 结果顺序仍与任务顺序对应。
 
@@ -89,16 +93,14 @@ python main_graph.py "调研 Python 3.13 的主要新特性"
 检查完成后应确认：
 
 - 终端出现 plan、research、critic、write、validate 日志。
-- 多个子任务显示同一批次并行执行。
+- 每个外层查询完成后都能在 checkpoint 中看到进度。
 - `reports/` 中出现新的 Markdown 文件。
 - 报告末尾包含运行状态和引用校验。
 
 ## 六、后续扩展
 
-Harness 后续可以增加：
+下一阶段优先实现：
 
-- JSONL 运行轨迹。
-- 每个节点的耗时和 token 统计。
-- 失败任务重试次数。
-- 报告质量评分。
-- 不同模型和提示词的对比评测。
+1. 用独立进程验证 PostgreSQL checkpoint：暂停、退出、重启后按相同 `thread_id` 恢复；再模拟研究查询中断，检查已完成查询和报告的幂等行为。
+2. 用 JSONL 记录每个节点的开始、结束、耗时、token、重试次数、checkpoint ID 和报告路径；不要写入数据库密码或完整原始消息。
+3. 建立固定主题评测集，先检查子问题覆盖、引用支持和失败说明，再比较模型与提示词版本。完成基线后再扩展 RAG 和长期记忆。

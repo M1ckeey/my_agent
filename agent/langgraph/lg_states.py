@@ -26,13 +26,18 @@ class ResearchState:
     """一场研究任务的外层状态，不保存 Agent 的原始 messages。"""
 
     topic: str
+    state_version: int = 1
+    run_id: str = ""
+    thread_id: str = ""
     user_instructions: str = ""
+    conversation: list[dict[str, str]] = field(default_factory=list)
 
     # Planner / Researcher 状态
     subquestions: list[ResearchSubQuestion] = field(default_factory=list)
     findings: list[ResearchFinding] = field(default_factory=list)
     raw_findings: list[ResearchFinding] = field(default_factory=list)
     frontier: list[dict[str, Any]] = field(default_factory=list)
+    completed_queries: list[str] = field(default_factory=list)
 
     # 循环与预算状态
     depth: int = 0
