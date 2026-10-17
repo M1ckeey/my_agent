@@ -1,11 +1,18 @@
 import unittest
 import os
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import time
 from uuid import uuid4
 from unittest.mock import patch, MagicMock
 
 from agent.graph import ResearchGraph
 from agent.langgraph.checkpoint import memory_checkpointer, open_checkpointer
 from agent.langgraph.lg_builder import graph as exported_graph
+from agent.langgraph.main import _save_report
 from agent.research_state import ResearchState, ResearchSubQuestion
 from agent.state import ResearchFinding
 
@@ -167,6 +174,77 @@ class CheckpointTests(unittest.TestCase):
                 finished = self.services(saver).resume(thread_id)
                 self.assertEqual(finished.status, "done")
                 self.assertEqual(finished.run_id, paused.run_id)
+
+    @unittest.skipUnless(os.getenv("TEST_POSTGRES_URL"), "需要 TEST_POSTGRES_URL")
+    def test_postgres_recovers_after_process_exit_and_query_termination(self):
+        thread_id = f"process-test-{uuid4().hex}"
+        child_env = os.environ.copy()
+        child_env["RESEARCH_DATABASE_URL"] = child_env["TEST_POSTGRES_URL"]
+        root = Path(__file__).resolve().parents[1]
+
+        with tempfile.TemporaryDirectory() as directory:
+            events = Path(directory) / "events.jsonl"
+            reports = Path(directory) / "reports"
+            command = [
+                sys.executable, "-m", "tests.checkpoint_process_worker",
+                "pause", thread_id, str(events), str(reports),
+            ]
+
+            def event_names():
+                if not events.exists():
+                    return []
+                return [json.loads(line)["event"] for line in events.read_text(encoding="utf-8").splitlines()]
+
+            paused = subprocess.run(command, cwd=root, env=child_env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(paused.returncode, 0, paused.stderr)
+            self.assertEqual(event_names(), ["paused"])
+
+            with patch.dict(os.environ, {"RESEARCH_DATABASE_URL": child_env["TEST_POSTGRES_URL"]}):
+                with open_checkpointer("postgres") as saver:
+                    state, pending = self.services(saver).get_state(thread_id)
+                    self.assertEqual(state.status, "planned")
+                    self.assertEqual(pending, ("research",))
+                    run_id = state.run_id
+
+            command[3] = "interrupt"
+            interrupted = subprocess.Popen(command, cwd=root, env=child_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                deadline = time.monotonic() + 30
+                while "start:second" not in event_names() and time.monotonic() < deadline:
+                    if interrupted.poll() is not None:
+                        _, stderr = interrupted.communicate()
+                        self.fail(f"worker exited before second query: {stderr}")
+                    time.sleep(0.1)
+                self.assertIn("start:second", event_names(), "second query did not start")
+            finally:
+                if interrupted.poll() is None:
+                    interrupted.terminate()
+                interrupted.communicate(timeout=10)
+
+            with patch.dict(os.environ, {"RESEARCH_DATABASE_URL": child_env["TEST_POSTGRES_URL"]}):
+                with open_checkpointer("postgres") as saver:
+                    state, pending = self.services(saver).get_state(thread_id)
+                    self.assertEqual(state.run_id, run_id)
+                    self.assertEqual(state.depth, 1)
+                    self.assertEqual(len(state.completed_queries), 1)
+                    self.assertEqual([item["query"] for item in state.frontier], ["second"])
+                    self.assertEqual(pending, ("research",))
+
+            command[3] = "finish"
+            finished = subprocess.run(command, cwd=root, env=child_env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(finished.returncode, 0, finished.stderr)
+            self.assertEqual(event_names(), ["paused", "start:first", "start:second", "start:second", "finished"])
+
+            with patch.dict(os.environ, {"RESEARCH_DATABASE_URL": child_env["TEST_POSTGRES_URL"]}):
+                with open_checkpointer("postgres") as saver:
+                    state, pending = self.services(saver).get_state(thread_id)
+                    self.assertEqual(state.status, "done")
+                    self.assertEqual(state.run_id, run_id)
+                    self.assertEqual(state.depth, 2)
+                    self.assertEqual(len(state.completed_queries), 2)
+                    self.assertEqual(pending, ())
+                    saved_path = _save_report(state.topic, state, reports)
+                    self.assertEqual(list(reports.glob("*.md")), [saved_path])
 
 
 if __name__ == "__main__":

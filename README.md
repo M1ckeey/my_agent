@@ -305,7 +305,7 @@ python -m unittest discover -v
 
 ## 当前限制
 
-- PostgreSQL 跨进程恢复需要可用数据库；目前只验证了跨连接恢复，尚未做独立进程强制终止测试。单个正在执行的 research 查询中断后可能重试
+- PostgreSQL 跨进程恢复需要可用数据库；独立进程终止后的恢复已用假研究服务验证。单个正在执行的 research 查询中断后会从该查询重新执行
 - token 使用量依赖模型服务返回 `usage.total_tokens`；服务端不返回时无法精确统计
 - Critic 的语义判断失败时会回退到确定性规则
 - 子 Agent 当前只会重试同一任务，不会根据失败原因自动改写查询

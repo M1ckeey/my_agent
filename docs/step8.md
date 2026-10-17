@@ -55,9 +55,9 @@ python -m unittest discover -v
 python -m compileall -q agent tools main.py main_graph.py
 ```
 
-2026-10-16 在 `langgraph` 环境验证：LangGraph 1.1.2、checkpoint 4.0.1、PostgreSQL saver 3.0.5；连接本机 PostgreSQL 16 的独立 `research` 数据库后，32 项测试全部通过，编译检查通过。`requirements.txt` 的最低版本与该环境保持一致。
+2026-10-16 在 `langgraph` 环境验证：LangGraph 1.1.2、checkpoint 4.0.1、PostgreSQL saver 3.0.5；连接本机 PostgreSQL 16 的独立 `research` 数据库后，32 项测试全部通过，编译检查通过。`requirements.txt` 的最低版本与该环境保持一致。新增子进程测试后，当前测试总数为 33 项。
 
-若有测试数据库，设置 `TEST_POSTGRES_URL` 后运行跨连接恢复集成测试。下面从本地 `.env` 读取 URL，不会在终端打印密码；测试会在该数据库中留下 checkpoint 记录，建议使用可清理的专用测试库：
+若有测试数据库，设置 `TEST_POSTGRES_URL` 后运行 PostgreSQL 集成测试。下面从本地 `.env` 读取 URL，不会在终端打印密码；测试会在该数据库中留下 checkpoint 记录，建议使用可清理的专用测试库：
 
 ```powershell
 $line = Get-Content .env | Where-Object { $_ -like 'RESEARCH_DATABASE_URL=*' } | Select-Object -Last 1
@@ -66,8 +66,10 @@ python -m unittest tests.test_checkpoint -v
 Remove-Item Env:TEST_POSTGRES_URL
 ```
 
-跨连接恢复测试已在本机 PostgreSQL 上通过；它验证关闭并重新打开数据库连接后恢复同一线程。2026-10-16 的测试在本机 `research` 数据库留下了测试线程数据。尚未测试独立进程被强制终止后的恢复，也未运行真实模型研究任务做端到端质量验证。状态版本目前为 1；遇到其他版本会明确报错，后续修改状态结构时需要同步实现迁移。PostgreSQL checkpoint 保存的是外层研究状态，不能恢复一个正在执行的内层 ReAct 调用到中间的 token 或工具步骤。
+跨连接恢复测试验证关闭并重新打开数据库连接后恢复同一线程。2026-10-17 新增的子进程测试验证了两个边界：`plan` 后退出进程可从新进程继续；第一个查询已提交后，在第二个查询执行中终止进程，新进程只重试第二个查询。测试还核对了 `run_id`、研究深度、完成查询数，以及同一 `run_id` 的报告不会重复保存。测试使用确定性的假 Planner、Researcher 和 Critic，不调用模型或网页搜索。它已在本机 PostgreSQL 上通过；测试线程数据会留在该数据库中。
 
-下一步先增加独立进程中断与恢复的集成测试，确认已提交查询不会重跑、正在执行的查询允许重试、最终报告只保存一次。之后记录节点耗时和 token、重试次数、引用覆盖及报告路径，再按 [评测计划](../eval/README.md) 用固定主题评估报告质量。
+状态版本目前为 1；遇到其他版本会明确报错，后续修改状态结构时需要同步实现迁移。PostgreSQL checkpoint 保存的是外层研究状态，不能恢复一个正在执行的内层 ReAct 调用到中间的 token 或工具步骤。尚未运行真实模型研究任务做端到端质量验证。
+
+下一步记录节点耗时和 token、重试次数、引用覆盖及报告路径，再按 [评测计划](../eval/README.md) 用固定主题评估报告质量。
 
 接口参考：[LangGraph persistence](https://docs.langchain.com/oss/python/langgraph/persistence)、[PostgresSaver README](https://github.com/langchain-ai/langgraph/tree/main/libs/checkpoint-postgres)。
