@@ -1,0 +1,8 @@
+{
+  "version": "v0.1-topics",
+  "approved_on": "2026-10-18",
+  "approval": "用户确认 8 道候选题全部保留",
+  "question_count": 8,
+  "status": "topics_approved_annotation_pending",
+  "notes": "用户已确认 8 道题目全部保留。预期子问题和参考说明仍需逐项校准后才能冻结整份题集并运行基线；运行 Agent 时只传 topic。"
+}

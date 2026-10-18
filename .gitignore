@@ -14,3 +14,6 @@ env/
 .idea/
 .DS_Store
 Thumbs.db
+
+# 评测原始产物可能包含外部资料和完整报告
+eval/results/
