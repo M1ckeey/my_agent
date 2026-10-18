@@ -214,8 +214,9 @@ class AgentState:
 - 手写 ReAct 内层和 LangGraph 外层研究图。
 - Critic 条件路由、Validator 和研究预算。
 - 外层图按查询保存 checkpoint；`ResearchGraph` 注入内存或 PostgreSQL saver，支持按 `thread_id` 查看和恢复。
+- 本地项目文档检索索引与 `rag_search` 工具，返回带文件行号的来源片段。
 
-PostgreSQL 跨连接恢复已验证；独立进程退出后的恢复边界和运行轨迹仍待验证或实现。固定主题评测已有 [流程计划](../eval/README.md)，题集、脚本和基线结果尚未实现。之后再扩展 RAG 和长期记忆。
+PostgreSQL 跨连接与独立进程恢复已验证。固定题集已有首轮试跑，完整质量复核和运行轨迹仍待补齐；见 [评测计划](../eval/README.md)。本地 RAG 已实现词法检索基线；向量检索和长期记忆仍待扩展，见 [Step 9](step9.md)。
 
 ## 9. 设计原则
 

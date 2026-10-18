@@ -8,6 +8,7 @@ Agent 可以：
 
 - 使用计算器完成可靠计算
 - 搜索网页和 arXiv 论文
+- 从本地文档索引检索带文件行号的片段
 - 读取项目目录内的文件
 - 把复杂主题拆成多个研究问题
 - 并行派发子 Agent，最后汇总研究结论
@@ -67,6 +68,7 @@ calculator
 web_search
 arxiv_search
 read_file
+rag_search
 plan_research
 delegate
 compact
@@ -274,6 +276,7 @@ python -m unittest discover -v
 │   ├── web_search.py          网页搜索
 │   ├── arxiv_search.py        arXiv 搜索
 │   ├── read_file.py           文件读取
+│   ├── rag_search.py          本地文档 RAG 检索
 │   ├── plan.py                研究计划工具
 │   └── delegate.py            子 Agent 调度工具
 ├── eval/
@@ -297,7 +300,10 @@ python -m unittest discover -v
 │   ├── step5.md               外层 LangGraph 编排
 │   ├── step6.md               会话级上下文压缩
 │   ├── step7.md               研究流程质量与预算控制
-│   └── step8.md               PostgreSQL checkpoint 与中断恢复
+│   ├── step8.md               PostgreSQL checkpoint 与中断恢复
+│   └── step9.md               本地文档 RAG 检索
+├── rag/
+│   └── index.py               文档切片、索引和 BM25 检索
 ├── reports/                   自动生成的研究报告
 ├── .task_outputs/             转存的大型工具结果
 └── .transcripts/              压缩前的会话记录
@@ -310,6 +316,8 @@ python -m unittest discover -v
 - Critic 的语义判断失败时会回退到确定性规则
 - 子 Agent 当前只会重试同一任务，不会根据失败原因自动改写查询
 - Validator 主要做材料覆盖和文本匹配，尚未判断事实、数字和来源之间的深层语义关系
-- 尚未接入完整运行轨迹和固定主题质量评测；评测流程计划见 [eval/README.md](eval/README.md)
-- 尚未接入 RAG 知识库和跨会话长期记忆
+- 固定题集已有首轮试跑，完整质量复核仍待补齐；指标口径见 [eval/README.md](eval/README.md)
+- Step 9 已接入本地文档 RAG；尚未接入向量检索和跨会话长期记忆
+
+本地文档检索需先运行 `python -m rag.index build`；用法与范围见 [Step 9](docs/step9.md)。
 

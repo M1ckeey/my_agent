@@ -17,3 +17,6 @@ Thumbs.db
 
 # 评测原始产物可能包含外部资料和完整报告
 eval/results/
+
+# Step 9 本地 RAG 索引（由命令重建）
+rag/index.json

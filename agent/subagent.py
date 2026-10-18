@@ -32,7 +32,7 @@ from .state import AgentState, ResearchFinding
 
 # 子 agent 能用的工具。**不含 delegate / plan_research**：前者防递归，后者是主
 # agent 的职责——子任务已经是拆好的，不需要再拆一次。
-SUBAGENT_TOOLS = ("web_search", "arxiv_search", "read_file", "calculator")
+SUBAGENT_TOOLS = ("web_search", "arxiv_search", "read_file", "rag_search", "calculator")
 
 # 单条结论的字符上限。提示词里已经要求写短，这里是硬兜底：四个子 agent 的结论会
 # 一起进主上下文，一条失控就能把主 agent 挤爆。

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from typing import Any
 
@@ -66,6 +67,23 @@ def trigger_hooks(event: str, *args: Any) -> Any:
 
 def _record_finding(state: Any, tool_call: Any, output: str) -> None:
     """默认 PostToolUse Hook：把工具结果保存为 finding。"""
+    if tool_call.function.name == "rag_search":
+        try:
+            payload = json.loads(output)
+        except (json.JSONDecodeError, TypeError):
+            payload = None
+        if isinstance(payload, dict) and isinstance(payload.get("hits"), list):
+            for hit in payload["hits"]:
+                if not isinstance(hit, dict) or not isinstance(hit.get("source"), str):
+                    continue
+                state.add_finding(
+                    content=str(hit.get("content", "")),
+                    source=hit["source"],
+                    source_type="rag_search",
+                    query=tool_call.function.arguments or "",
+                    task_id=state.task,
+                )
+            return
     state.add_finding(
         content=output,
         source=tool_call.function.name,

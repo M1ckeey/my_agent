@@ -31,6 +31,7 @@ from .compact import compact
 from .delegate import delegate
 from .plan import plan_research
 from .read_file import read_file
+from .rag_search import rag_search
 from .web_search import web_search
 
 # 无条件注册，哪怕没配 TAVILY_API_KEY。
@@ -43,6 +44,7 @@ TOOLS: dict[str, Tool] = {
     "web_search": Tool.of(web_search),
     "arxiv_search": Tool.of(arxiv_search),
     "read_file": Tool.of(read_file),
+    "rag_search": Tool.of(rag_search),
     "plan_research": Tool.of(plan_research),
     "delegate": Tool.of(delegate),
 }
