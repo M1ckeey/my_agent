@@ -164,9 +164,20 @@ plan → research → critic → revise → research（补查）或 write → va
 
 项目的 `langgraph` Conda 环境已验证这套实现，包括本机 PostgreSQL 的跨连接恢复。运行测试前可执行 `conda activate langgraph`；再次运行数据库集成测试需设置 `TEST_POSTGRES_URL`，详见 [Step 8 测试说明](docs/step8.md#测试)。
 
-### 评测计划
+### Step 9：本地文档 RAG
 
-[eval/README.md](eval/README.md) 规划了固定题集、逐题保存原始产物、离线评分与人工复核、建立可比较基线的流程。第一版计划区分流程完成、子问题材料覆盖、来源可追溯和人工核对的论断支持。`eval/` 目前只有计划文档；题集、评测脚本和基线结果尚未实现。
+`rag_search` 从项目文档的 BM25 索引中取回片段，来源带文件路径和行号。默认收录 `README.md`、`TODO.md`、`docs/` 和 `eval/` 中的 Markdown/TXT；索引保存在 `rag/index.json`，由命令生成，不提交到 Git。新增或修改资料后需重新构建：
+
+```bash
+python -m rag.index build
+python -m rag.index search "PostgreSQL checkpoint 中断恢复" --top-k 3
+```
+
+指定目录构建时会**替换**默认收录范围；要同时保留项目文档，应把全部路径列出。详见 [Step 9 说明](docs/step9.md)。与 `DeepResearch` 的实现、差距及后续验收顺序见 [RAG 对标文档](rag/deepresearch-comparison.md)。当前尚无 Embedding、向量数据库或跨会话长期记忆。
+
+### 评测进度
+
+[eval/README.md](eval/README.md) 说明固定题集与评测流程。8 道题已审核并完成[首次试跑](eval/first-evaluation.md)，`eval/run.py` 和 `eval/score.py` 已落地；预期子问题、引用忠实性等人工标注尚待校准，因此还没有正式完整基线。下一轮按[七项指标](eval/metrics.md)记录可计算项与缺失原因。现有研究题不能用于声称本地 RAG 的检索命中率，需另建带人工目标来源的 RAG 题集。
 
 ## 快速开始
 
@@ -280,7 +291,11 @@ python -m unittest discover -v
 │   ├── plan.py                研究计划工具
 │   └── delegate.py            子 Agent 调度工具
 ├── eval/
-│   └── README.md              固定题集与报告质量评测计划
+│   ├── README.md              固定题集与评测流程
+│   ├── dataset.jsonl          已审核题目
+│   ├── run.py                 逐题运行并保存原始产物
+│   ├── score.py               离线计算评测指标
+│   └── metrics.md             下一轮七项指标口径
 ├── tests/
 │   ├── test_context.py        研究材料压缩测试
 │   ├── test_compactor.py      会话压缩测试
@@ -303,7 +318,9 @@ python -m unittest discover -v
 │   ├── step8.md               PostgreSQL checkpoint 与中断恢复
 │   └── step9.md               本地文档 RAG 检索
 ├── rag/
-│   └── index.py               文档切片、索引和 BM25 检索
+│   ├── index.py               文档切片、索引和 BM25 检索
+│   ├── index.json             生成的本地索引，不入库
+│   └── deepresearch-comparison.md  对标分析与后续验收
 ├── reports/                   自动生成的研究报告
 ├── .task_outputs/             转存的大型工具结果
 └── .transcripts/              压缩前的会话记录
@@ -316,8 +333,9 @@ python -m unittest discover -v
 - Critic 的语义判断失败时会回退到确定性规则
 - 子 Agent 当前只会重试同一任务，不会根据失败原因自动改写查询
 - Validator 主要做材料覆盖和文本匹配，尚未判断事实、数字和来源之间的深层语义关系
-- 固定题集已有首轮试跑，完整质量复核仍待补齐；指标口径见 [eval/README.md](eval/README.md)
-- Step 9 已接入本地文档 RAG；尚未接入向量检索和跨会话长期记忆
+- 固定题集已有首轮试跑，完整质量复核仍待补齐；指标口径见 [eval/metrics.md](eval/metrics.md)
+- Step 9 已接入本地文档 RAG；资料需手动重建索引，尚无带人工目标来源的 RAG 专项题集
+- 尚未接入向量检索和跨会话长期记忆；是否升级检索架构以专项题集结果为依据
 
 本地文档检索需先运行 `python -m rag.index build`；用法与范围见 [Step 9](docs/step9.md)。
 
