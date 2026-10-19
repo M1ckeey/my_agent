@@ -65,39 +65,153 @@ def _default_research(tasks: list[str]) -> Sequence[ResearchFinding]:
                     token_used=result.token_used,
                 )
             )
-        elif not result.ok and result.error and not result.findings:
+        if not result.ok and result.error:
             findings.append(
                 ResearchFinding(
                     content=f"子任务未完成：{result.error}",
                     source="subagent",
-                    source_type="subagent",
+                    source_type="subagent_error",
                     query=result.task,
                     task_id=result.task,
-                    token_used=result.token_used,
+                    token_used=result.token_used if not result.findings else 0,
                 )
             )
     return findings
 
 
 def _default_write(state: ResearchState) -> str:
-    """把 findings 整理成最小 Markdown 报告。"""
+    """Summarize source-addressed evidence and keep the excerpts auditable."""
     findings = ContextManager().compact(state.findings)
-    lines = [f"# {state.topic}", ""]
+    summaries = _synthesize_answers(state, findings)
+    lines = [f"# {state.topic}", "", "## 研究结论", ""]
+    supported_questions = 0
+    for question in state.subquestions:
+        if any(
+            finding.subquestion_id == question.id
+            and finding.source.startswith(("http://", "https://", "file:"))
+            for finding in findings
+        ):
+            supported_questions += 1
+    lines.append(
+        f"已找到可定位材料的子问题：{supported_questions}/{len(state.subquestions)}。"
+        "下文按问题整理结论及证据；未覆盖的部分保留为信息缺口。"
+        "自动生成的结论仍需人工核对事实忠实性。"
+    )
+    lines.append("")
     for question in state.subquestions:
         lines.extend([f"## {question.question}", ""])
         matched = [
             finding for finding in findings
-            if finding.subquestion_id == question.id
-            or finding.task_id == question.question
-            or finding.query == question.question
+            if (finding.subquestion_id == question.id
+                or finding.task_id == question.question
+                or finding.query == question.question)
+            and finding.source.startswith(("http://", "https://", "file:"))
+            and finding.content.strip()
         ]
         if not matched:
-            lines.append("信息不足。")
+            lines.append("信息不足：没有可定位的来源材料。")
         else:
+            summary = summaries.get(question.id)
+            if summary:
+                answer, cited_sources = summary
+                citations = "".join(f"（来源：{source}）" for source in cited_sources)
+                lines.extend([f"**综合回答：** {answer}{citations}", "", "证据摘录：", ""])
             for finding in matched:
-                lines.append(f"- {finding.content}（来源：{finding.source}）")
+                evidence = " ".join(finding.content.split())
+                lines.append(f"- {evidence}（来源：{finding.source}）")
+        if any(
+            finding.source_type == "subagent_error"
+            and finding.subquestion_id == question.id
+            for finding in findings
+        ):
+            lines.append("- 研究过程未完成；以上材料可能不完整。")
         lines.append("")
     return "\n".join(lines).strip()
+
+
+def _synthesize_answers(
+    state: ResearchState, findings: list[ResearchFinding]
+) -> dict[str, tuple[str, list[str]]]:
+    """Ask the model for concise answers; accept only references in the input set."""
+    evidence: list[dict[str, str]] = []
+    source_by_id: dict[str, str] = {}
+    for question in state.subquestions:
+        matched = [
+            finding for finding in findings
+            if finding.subquestion_id == question.id
+            and finding.source.startswith(("http://", "https://", "file:"))
+        ][:3]
+        for finding in matched:
+            identifier = f"s{len(evidence) + 1}"
+            source_by_id[identifier] = finding.source
+            evidence.append({
+                "id": identifier, "question_id": question.id,
+                "source": finding.source, "text": finding.content[:400],
+            })
+    if not evidence:
+        return {}
+    request = {
+        "topic": state.topic,
+        "questions": [{"id": q.id, "question": q.question} for q in state.subquestions],
+        "evidence": evidence,
+    }
+    try:
+        response = call_llm(
+            get_client(), os.getenv("LLM_MODEL", "deepseek-v4-flash"),
+            [
+                {"role": "system", "content": (
+                    "你是研究报告写作者。只根据给出的证据回答各子问题，不添加证据中没有的事实。"
+                    "尽量逐项回答每个子问题；每条结论必须给出支撑它的证据 id；"
+                    "证据不足的子问题不要输出。"
+                    "只返回 JSON 对象：{\"answers\":[{\"question_id\":\"q1\","
+                    "\"answer\":\"简短回答\",\"source_ids\":[\"s1\"]}]}。"
+                )},
+                {"role": "user", "content": json.dumps(request, ensure_ascii=False)},
+            ], tools=[], max_tokens=2200,
+        )
+        raw = final_text(response).strip()
+        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw).strip()
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            match = re.search(r"\{[\s\S]*\}", raw)
+            if not match:
+                return {}
+            data = json.loads(match.group(0))
+        answer_rows = data.get("answers", []) if isinstance(data, dict) else []
+        if isinstance(answer_rows, dict):
+            answer_rows = [dict(value, question_id=key) for key, value in answer_rows.items() if isinstance(value, dict)]
+        answers: dict[str, tuple[str, list[str]]] = {}
+        question_ids = {question.id for question in state.subquestions}
+        for item in answer_rows:
+            if not isinstance(item, dict):
+                continue
+            question_id = str(item.get("question_id", ""))
+            if question_id not in question_ids:
+                question_id = next(
+                    (candidate for candidate in question_ids if candidate.lower() == question_id.lower()),
+                    question_id,
+                )
+            answer = " ".join(str(item.get("answer", item.get("summary", ""))).split())
+            source_ids = item.get("source_ids", [])
+            if isinstance(source_ids, str):
+                source_ids = [source_ids]
+            source_ids = [str(source_id).lower() for source_id in source_ids] if isinstance(source_ids, list) else source_ids
+            if (question_id not in question_ids or not answer
+                or not isinstance(source_ids, list) or not source_ids
+                or any(source_id not in source_by_id for source_id in source_ids)):
+                continue
+            valid_ids = {
+                entry["id"] for entry in evidence if entry["question_id"] == question_id
+            }
+            if any(source_id not in valid_ids for source_id in source_ids):
+                continue
+            answers[question_id] = (
+                answer, list(dict.fromkeys(source_by_id[source_id] for source_id in source_ids))
+            )
+        return answers
+    except Exception:
+        return {}
 
 
 def _deterministic_critic(
@@ -164,9 +278,11 @@ def _default_validate(state: ResearchState) -> Sequence[dict[str, Any]]:
     for question in state.subquestions:
         matched = [
             finding for finding in state.findings
-            if finding.subquestion_id == question.id
-            or finding.task_id == question.question
-            or finding.query == question.question
+            if (finding.subquestion_id == question.id
+                or finding.task_id == question.question
+                or finding.query == question.question)
+            and finding.source_type != "subagent_error"
+            and bool(finding.content.strip())
         ]
         citations.append(
             {
@@ -183,7 +299,11 @@ def _default_validate(state: ResearchState) -> Sequence[dict[str, Any]]:
         source = match.group(1).strip()
         source_findings = [finding for finding in state.findings if finding.source == source]
         report_text = state.report
-        supported = any(finding.content[:120] in report_text for finding in source_findings)
+        normalized_report = " ".join(report_text.split())
+        supported = any(
+            " ".join(finding.content.split())[:120] in normalized_report
+            for finding in source_findings if finding.content.strip()
+        )
         citations.append(
             {
                 "type": "citation",

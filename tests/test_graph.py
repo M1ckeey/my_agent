@@ -88,6 +88,22 @@ class ResearchGraphTests(unittest.TestCase):
         self.assertEqual(result.report, "q1")
         self.assertEqual(result.findings[0].subquestion_id, "q1")
 
+    def test_external_topic_does_not_use_project_files_as_report_evidence(self):
+        graph = ResearchGraph(
+            planner=lambda _: [ResearchSubQuestion(id="q1", question="Python 3.13")],
+            researcher=lambda tasks: [
+                ResearchFinding(content="dataset repeats the topic", source="file:eval/dataset.jsonl#L1-L1", source_type="rag_search"),
+                ResearchFinding(content="release note", source="https://docs.python.org/3/whatsnew/3.13.html", source_type="web_search"),
+            ],
+            writer=lambda state: ",".join(f.source for f in state.findings),
+            critic=lambda state: "stop",
+            verbose=False,
+        )
+        result = graph.run("Python 3.13 changes")
+        self.assertEqual(len(result.raw_findings), 2)
+        self.assertEqual(len(result.findings), 1)
+        self.assertEqual(result.findings[0].source, "https://docs.python.org/3/whatsnew/3.13.html")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -228,8 +228,18 @@ def write(state: ResearchState, *, config: RunnableConfig) -> dict[str, Any]:
     services = _services(config)
     _log(services, f"write：整理 {len(state.findings)} 条 findings")
     raw_findings = list(state.findings)
+    # The project RAG corpus contains the evaluation questions themselves.
+    # Keep those files as evidence only when the user actually asks about this repo.
+    local_topic = any(
+        marker in state.topic.lower()
+        for marker in ("本项目", "这个项目", "此项目", "本仓库", "这个仓库", "my_agent", "readme.md", "docs/")
+    )
+    report_findings = [
+        finding for finding in raw_findings
+        if local_topic or not finding.source.startswith("file:")
+    ]
     compressed = services.context_manager.compress(
-        raw_findings,
+        report_findings,
         topic=state.topic,
         state=state,
         summarizer=services.summarizer,

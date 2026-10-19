@@ -5,7 +5,7 @@
 | 指标 | 本项目下一轮口径 | 数据与判定者 | 当前准备情况 |
 | --- | --- | --- | --- |
 | 1. 完成率 | 逐题满足 `status=done`、`error=null`、报告至少 300 字且有至少 2 个 Markdown 标题；汇总为通过题数 / 全部题数。它只排除空转和残缺产物。 | raw 状态与报告，程序自动判定。 | 可算；不能代替质量分。 |
-| 2. 引用准确率 | 逐条核对**具体来源**是否真实对应 finding，再判定报告所引论断是否得到该来源支持。分别报告来源存在率与忠实率；没有具体来源、没有引用或未复核时记缺失。 | 报告中的 URL / arXiv ID / 文件路径、对应 finding、人工复核记录；将来可增加独立裁判并人工抽检。 | 当前只引用工具名，故不可算；须先改来源记录与报告引用。 |
+| 2. 引用准确率 | 逐条核对**具体来源**是否真实对应 finding，再判定报告所引论断是否得到该来源支持。分别报告来源存在率与忠实率；没有具体来源、没有引用或未复核时记缺失。 | 报告中的 URL / arXiv ID / 文件路径、对应 finding、人工复核记录；将来可增加独立裁判并人工抽检。 | 代码已保留具体来源并将报告引用关联到 finding；来源真实性和论断忠实性尚未人工复核，暂不可算。 |
 | 3. 信息覆盖度 | 用题集的 `expected_subquestions` 作分母，逐项核对 findings 是否提供相关材料；汇总覆盖项数 / 预期项数。Planner 自己生成的子问题另报诊断值，不进入此指标。 | 人工标注的预期子问题与逐项复核；若启用 LLM 裁判，记录模型、提示词版本、理由及人工抽检。 | 题目已审核，预期子问题尚待校准；当前 13/36 不是此指标。 |
 | 4. 检索命中率 | 仅在有人工标注的检索目标（如应命中的文档 ID / 可接受来源集合或可核对的关键事实）及检索结果列表时统计命中数 / 目标数，注明 top-k 与匹配规则。关键词或语义近似只作为辅助诊断，不等同于真实相关文档召回。 | 检索目标标注和逐次检索结果。 | 当前无 RAG 题与 gold 检索目标，标为 `not_applicable`；接入 RAG 后启用。 |
 | 5. Token 成本 | 优先记录每次模型调用的输入、输出 token，按模型价格和运行日期计算金额；逐题、总计分开。只有 `ResearchState.token_used` 时仅报告内部计数，金额为缺失，不冒充实际账单。 | 模型 API usage、模型名和价格快照；程序自动汇总。 | 当前仅有不完整的状态计数，标为 `partial`。 |
@@ -17,12 +17,12 @@
 ## 下一次运行前的入门条件
 
 1. 人工校准并冻结 `expected_subquestions`、`reference_notes` 与题集版本；不根据首轮输出修改正确预期。
-2. 报告能引用具体来源，并保留对应 finding；逐条引用复核有可保存的记录。若仍只有工具名，引用准确率必须显示 `unavailable`，整轮只能称试跑。
+2. 报告能引用具体来源，并保留对应 finding；逐条引用复核有可保存的记录。只有结构对应率时，引用准确率仍显示 `unavailable`，整轮只能称试跑。
 3. 持久化模型 usage 和 Critic 决策事件，或在七项表中明确标出缺失并说明原因；不得用 `depth` 冒充 Critic 轮数、用状态 token 冒充账单。
 4. 检索命中率在本批非 RAG 题上明确标为 `not_applicable`。将来有 RAG 题和检索目标后启用，并与旧轮分开比较。
 5. 离线评分保存七项逐题结果、汇总、缺失原因和人工复核记录；只比较同题集版本、同评分口径的轮次。七项中任何适用指标未评分时，不宣称“正式完整基线”。
 
-`score.py` 当前在 `summary.json` 中写入 `metric_version=v2-seven-2026-10-18`、逐题 `seven_metrics`、汇总 `seven_metrics` 和 `evaluation_complete`。复核文件放在本轮 `results/<run>/review/<题目ID>.json`；数组顺序分别对应题集预期子问题与 raw 中 `type=citation` 的引用记录：
+`score.py` 当前在 `summary.json` 中写入 `metric_version=v3-seven-2026-10-19`、逐题 `seven_metrics`、汇总 `seven_metrics` 和 `evaluation_complete`。复核文件放在本轮 `results/<run>/review/<题目ID>.json`；数组顺序分别对应题集预期子问题与 raw 中 `type=citation` 的引用记录：
 
 ```json
 {"reviewer":"人工复核者","coverage_checks":[true,false,true],"citation_checks":[{"exists":true,"faithful":true},{"exists":true,"faithful":false}]}

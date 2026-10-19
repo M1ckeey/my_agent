@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 
 EVAL_DIR = Path(__file__).resolve().parent
-METRIC_VERSION = "v2-seven-2026-10-18"
+METRIC_VERSION = "v3-seven-2026-10-19"
 
 
 def _metric(status: str, value=None, reason: str = "", **details) -> dict:
@@ -128,8 +128,8 @@ def score(output_dir: Path) -> dict:
         citations = [item for item in checks if item.get("type") == "citation"]
         coverage_checks = [item for item in checks if item.get("type") == "coverage"]
         source_matched = sum(bool(c.get("exists")) for c in citations)
-        # The current writer cites tool names (e.g. web_search), not source URLs.
-        # A tool-name match is not evidence-level traceability.
+        # This checks that a report citation was retained as a finding. It does
+        # not establish that the external URL exists or that the claim is faithful.
         specific_sources = sum(_specific_source(str(c.get("source", ""))) for c in citations)
         report = raw.get("report") or ""
         per_question.append({
@@ -138,8 +138,8 @@ def score(output_dir: Path) -> dict:
             "status": raw.get("status", "missing"),
             "completed": raw.get("status") == "done" and bool(report.strip()),
             "citation_count": len(citations),
-            "tool_source_matches": source_matched,
-            "tool_source_match_rate": None if not citations else source_matched / len(citations),
+            "citation_finding_matches": source_matched,
+            "citation_finding_match_rate": None if not citations else source_matched / len(citations),
             "specific_source_citations": specific_sources,
             "citation_traceability": None,
             "planner_subquestions_with_findings": sum(bool(c.get("exists")) for c in coverage_checks),
@@ -154,7 +154,7 @@ def score(output_dir: Path) -> dict:
         })
     totals = Counter(item["status"] for item in per_question)
     cited = sum(item["citation_count"] for item in per_question)
-    matched = sum(item["tool_source_matches"] for item in per_question)
+    matched = sum(item["citation_finding_matches"] for item in per_question)
     specific = sum(item["specific_source_citations"] for item in per_question)
     planner_count = sum(item["planner_subquestion_count"] for item in per_question)
     planner_covered = sum(item["planner_subquestions_with_findings"] for item in per_question)
@@ -197,8 +197,8 @@ def score(output_dir: Path) -> dict:
         "completion_rate": sum(item["completed"] for item in per_question) / len(rows),
         "statuses": dict(totals),
         "citation_count": cited,
-        "tool_source_matches": matched,
-        "tool_source_match_rate": None if not cited else matched / cited,
+        "citation_finding_matches": matched,
+        "citation_finding_match_rate": None if not cited else matched / cited,
         "specific_source_citations": specific,
         "citation_traceability": None,
         "planner_subquestions_with_findings": planner_covered,
